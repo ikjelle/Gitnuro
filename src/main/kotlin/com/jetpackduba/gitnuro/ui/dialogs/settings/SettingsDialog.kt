@@ -222,6 +222,16 @@ fun UiSettings(settingsViewModel: SettingsViewModel) {
             settingsViewModel.scaleUi = newValue.value
         }
     )
+
+    val stagingLayoutReversedEnabled by settingsViewModel.stagingLayoutReversedEnabledFlow.collectAsState()
+    SettingToggle(
+        title = "Reverse Staging Layout",
+        subtitle = "Reverse the staging/unstaging layout, putting Unstaged on top and Staged at bottom",
+        value = stagingLayoutReversedEnabled,
+        onValueChanged = { value ->
+            settingsViewModel.stagingLayoutReversedEnabled = value
+        }
+    )
 }
 
 @Composable

@@ -19,6 +19,7 @@ class SettingsViewModel @Inject constructor(
     val themeState = appSettings.themeState
     val ffMergeFlow = appSettings.ffMergeFlow
     val commitsLimitEnabledFlow = appSettings.commitsLimitEnabledFlow
+    val stagingLayoutReversedEnabledFlow = appSettings.stagingLayoutReversedEnabledFlow
 
     var scaleUi: Float
         get() = appSettings.scaleUi
@@ -42,6 +43,12 @@ class SettingsViewModel @Inject constructor(
         get() = appSettings.theme
         set(value) {
             appSettings.theme = value
+        }
+
+    var stagingLayoutReversedEnabled: Boolean
+        get() = appSettings.stagingLayoutReversed
+        set(value) {
+            appSettings.stagingLayoutReversed = value
         }
 
     fun saveCustomTheme(filePath: String) {

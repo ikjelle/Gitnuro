@@ -28,6 +28,8 @@ private const val PREF_CUSTOM_THEME = "customTheme"
 private const val PREF_UI_SCALE = "ui_scale"
 private const val PREF_DIFF_TYPE = "diffType"
 
+private const val PREF_STAGING_LAYOUT_REVERSED = "stagingLayoutReversed"
+
 
 private const val PREF_GIT_FF_MERGE = "gitFFMerge"
 
@@ -59,6 +61,9 @@ class AppSettings @Inject constructor() {
 
     private val _textDiffTypeFlow = MutableStateFlow(textDiffType)
     val textDiffTypeFlow: StateFlow<TextDiffType> = _textDiffTypeFlow
+
+    private val _stagingLayoutReversed = MutableStateFlow(stagingLayoutReversed)
+    val stagingLayoutReversedEnabledFlow: MutableStateFlow<Boolean> = _stagingLayoutReversed
 
     var latestTabsOpened: String
         get() = preferences.get(PREF_LATEST_REPOSITORIES_TABS_OPENED, "")
@@ -120,6 +125,15 @@ class AppSettings @Inject constructor() {
     val commitsLimit: Int
         get() {
             return preferences.getInt(PREF_COMMITS_LIMIT, DEFAULT_COMMITS_LIMIT)
+        }
+
+    var stagingLayoutReversed: Boolean
+        get() {
+            return preferences.getBoolean(PREF_STAGING_LAYOUT_REVERSED, false)
+        }
+        set(value) {
+            preferences.putBoolean(PREF_STAGING_LAYOUT_REVERSED, value)
+            _stagingLayoutReversed.value = value
         }
 
     suspend fun setCommitsLimit(value: Int) {
