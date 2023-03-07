@@ -60,11 +60,13 @@ fun UncommitedChanges(
     val stagedListState by statusViewModel.stagedLazyListState.collectAsState()
     val unstagedListState by statusViewModel.unstagedLazyListState.collectAsState()
     val isAmend by statusViewModel.isAmend.collectAsState()
+    val stagingLayoutReversedEnabledFlow = statusViewModel.stagingLayoutReversedEnabledFlow.collectAsState()
 
     val stageStatus = stageStatusState.value
     val staged: List<StatusEntry>
     val unstaged: List<StatusEntry>
     val isLoading: Boolean
+    val isStagingLayoutReversed = stagingLayoutReversedEnabledFlow.value
 
     if (stageStatus is StageStatus.Loaded) {
         staged = stageStatus.staged
@@ -175,7 +177,7 @@ fun UncommitedChanges(
             )
         }
 
-        if (false) {
+        if (!isStagingLayoutReversed) {
             stagedEntriesList()
             unstagedEntriesList()
         } else {

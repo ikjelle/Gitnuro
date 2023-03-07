@@ -13,6 +13,7 @@ import com.jetpackduba.gitnuro.git.rebase.ContinueRebaseUseCase
 import com.jetpackduba.gitnuro.git.rebase.SkipRebaseUseCase
 import com.jetpackduba.gitnuro.git.repository.ResetRepositoryStateUseCase
 import com.jetpackduba.gitnuro.git.workspace.*
+import com.jetpackduba.gitnuro.preferences.AppSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -30,6 +31,7 @@ private const val MIN_TIME_IN_MS_TO_SHOW_LOAD = 500L
 
 class StatusViewModel @Inject constructor(
     private val tabState: TabState,
+    private val appSettings: AppSettings,
     private val stageEntryUseCase: StageEntryUseCase,
     private val unstageEntryUseCase: UnstageEntryUseCase,
     private val resetEntryUseCase: ResetEntryUseCase,
@@ -59,6 +61,8 @@ class StatusViewModel @Inject constructor(
 
     val stagedLazyListState = MutableStateFlow(LazyListState(0, 0))
     val unstagedLazyListState = MutableStateFlow(LazyListState(0, 0))
+
+    val stagingLayoutReversedEnabledFlow = appSettings.stagingLayoutReversedEnabledFlow
 
     /**
      * Notify the UI that the commit message has been changed by the view model
