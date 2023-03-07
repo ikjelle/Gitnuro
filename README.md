@@ -1,3 +1,7 @@
+# Fork of Gitnuro
+In this fork I added:
+* Added setting to flip staging and unstaging
+
 # Gitnuro - Multiplatform Git Client
 [![Latest release](https://img.shields.io/github/v/release/JetpackDuba/Gitnuro?color=blue&label=latest%20release)](https://github.com/JetpackDuba/Gitnuro/releases/latest)
 

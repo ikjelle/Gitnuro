@@ -104,70 +104,84 @@ fun UncommitedChanges(
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colors.primaryVariant)
         }
 
-        EntriesList(
-            modifier = Modifier
-                .weight(5f)
-                .padding(bottom = 4.dp)
-                .fillMaxWidth(),
-            title = "Staged",
-            allActionTitle = "Unstage all",
-            actionTitle = "Unstage",
-            selectedEntryType = if (selectedEntryType is DiffEntryType.StagedDiff) selectedEntryType else null,
-            actionColor = MaterialTheme.colors.error,
-            actionTextColor = MaterialTheme.colors.onError,
-            statusEntries = staged,
-            lazyListState = stagedListState,
-            onDiffEntrySelected = onStagedDiffEntrySelected,
-            onDiffEntryOptionSelected = {
-                statusViewModel.unstage(it)
-            },
-            onGenerateContextMenu = { statusEntry ->
-                statusEntriesContextMenuItems(
-                    statusEntry = statusEntry,
-                    entryType = EntryType.STAGED,
-                    onBlame = { onBlameFile(statusEntry.filePath) },
-                    onReset = { statusViewModel.resetStaged(statusEntry) },
-                    onHistory = { onHistoryFile(statusEntry.filePath) },
-                )
-            },
-            onAllAction = {
-                statusViewModel.unstageAll()
-            },
-        )
+        @Composable
+        fun stagedEntriesList() {
+            EntriesList(
+                modifier = Modifier
+                    .weight(5f)
+                    .padding(bottom = 4.dp)
+                    .fillMaxWidth(),
+                title = "Staged",
+                allActionTitle = "Unstage all",
+                actionTitle = "Unstage",
+                selectedEntryType = if (selectedEntryType is DiffEntryType.StagedDiff) selectedEntryType else null,
+                actionColor = MaterialTheme.colors.error,
+                actionTextColor = MaterialTheme.colors.onError,
+                statusEntries = staged,
+                lazyListState = stagedListState,
+                onDiffEntrySelected = onStagedDiffEntrySelected,
+                onDiffEntryOptionSelected = {
+                    statusViewModel.unstage(it)
+                },
+                onGenerateContextMenu = { statusEntry ->
+                    statusEntriesContextMenuItems(
+                        statusEntry = statusEntry,
+                        entryType = EntryType.STAGED,
+                        onBlame = { onBlameFile(statusEntry.filePath) },
+                        onReset = { statusViewModel.resetStaged(statusEntry) },
+                        onHistory = { onHistoryFile(statusEntry.filePath) },
+                    )
+                },
+                onAllAction = {
+                    statusViewModel.unstageAll()
+                },
+            )
+        }
 
-        EntriesList(
-            modifier = Modifier
-                .weight(5f)
-                .padding(bottom = 4.dp)
-                .fillMaxWidth(),
-            title = "Unstaged",
-            actionTitle = "Stage",
-            selectedEntryType = if (selectedEntryType is DiffEntryType.UnstagedDiff) selectedEntryType else null,
-            actionColor = MaterialTheme.colors.primary,
-            actionTextColor = MaterialTheme.colors.onPrimary,
-            statusEntries = unstaged,
-            lazyListState = unstagedListState,
-            onDiffEntrySelected = onUnstagedDiffEntrySelected,
-            onDiffEntryOptionSelected = {
-                statusViewModel.stage(it)
-            },
-            onGenerateContextMenu = { statusEntry ->
-                statusEntriesContextMenuItems(
-                    statusEntry = statusEntry,
-                    entryType = EntryType.UNSTAGED,
-                    onBlame = { onBlameFile(statusEntry.filePath) },
-                    onHistory = { onHistoryFile(statusEntry.filePath) },
-                    onReset = { statusViewModel.resetUnstaged(statusEntry) },
-                    onDelete = {
-                        statusViewModel.deleteFile(statusEntry)
-                    },
-                )
-            },
-            onAllAction = {
-                statusViewModel.stageAll()
-            },
-            allActionTitle = "Stage all",
-        )
+        @Composable
+        fun unstagedEntriesList() {
+            EntriesList(
+                modifier = Modifier
+                    .weight(5f)
+                    .padding(bottom = 4.dp)
+                    .fillMaxWidth(),
+                title = "Unstaged",
+                actionTitle = "Stage",
+                selectedEntryType = if (selectedEntryType is DiffEntryType.UnstagedDiff) selectedEntryType else null,
+                actionColor = MaterialTheme.colors.primary,
+                actionTextColor = MaterialTheme.colors.onPrimary,
+                statusEntries = unstaged,
+                lazyListState = unstagedListState,
+                onDiffEntrySelected = onUnstagedDiffEntrySelected,
+                onDiffEntryOptionSelected = {
+                    statusViewModel.stage(it)
+                },
+                onGenerateContextMenu = { statusEntry ->
+                    statusEntriesContextMenuItems(
+                        statusEntry = statusEntry,
+                        entryType = EntryType.UNSTAGED,
+                        onBlame = { onBlameFile(statusEntry.filePath) },
+                        onHistory = { onHistoryFile(statusEntry.filePath) },
+                        onReset = { statusViewModel.resetUnstaged(statusEntry) },
+                        onDelete = {
+                            statusViewModel.deleteFile(statusEntry)
+                        },
+                    )
+                },
+                onAllAction = {
+                    statusViewModel.stageAll()
+                },
+                allActionTitle = "Stage all",
+            )
+        }
+
+        if (false) {
+            stagedEntriesList()
+            unstagedEntriesList()
+        } else {
+            unstagedEntriesList()
+            stagedEntriesList()
+        }
 
         Column(
             modifier = Modifier
