@@ -185,6 +185,7 @@ fun HistoryContentLoaded(
                             onStageHunk = { _, _ -> },
                             onResetHunk = { _, _ -> },
                             onActionTriggered = { _, _, _ -> },
+                            onActionTriggeredBoth = { _, _, _, _ -> },
                         )
                     }
 

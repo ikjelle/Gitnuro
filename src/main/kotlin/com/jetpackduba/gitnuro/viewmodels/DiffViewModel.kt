@@ -26,7 +26,9 @@ class DiffViewModel @Inject constructor(
     private val stageHunkUseCase: StageHunkUseCase,
     private val unstageHunkUseCase: UnstageHunkUseCase,
     private val stageHunkLineUseCase: StageHunkLineUseCase,
+    private val stageHunkLinesUseCase: StageHunkLinesUseCase,
     private val unstageHunkLineUseCase: UnstageHunkLineUseCase,
+    private val unstageHunkLinesUseCase: UnstageHunkLinesUseCase,
     private val resetHunkUseCase: ResetHunkUseCase,
     private val stageEntryUseCase: StageEntryUseCase,
     private val unstageEntryUseCase: UnstageEntryUseCase,
@@ -180,11 +182,24 @@ class DiffViewModel @Inject constructor(
         stageHunkLineUseCase(git, entry, hunk, line)
     }
 
+    fun stageHunkLines(entry: DiffEntry, hunk: Hunk, lines: List<Line>) = tabState.runOperation(
+        refreshType = RefreshType.UNCOMMITED_CHANGES,
+        showError = true,
+    ) { git ->
+        stageHunkLinesUseCase(git, entry, hunk, lines)
+    }
+
     fun unstageHunkLine(entry: DiffEntry, hunk: Hunk, line: Line) = tabState.runOperation(
         refreshType = RefreshType.UNCOMMITED_CHANGES,
         showError = true,
     ) { git ->
         unstageHunkLineUseCase(git, entry, hunk, line)
+    }
+    fun unstageHunkLines(entry: DiffEntry, hunk: Hunk, lines: List<Line>) = tabState.runOperation(
+        refreshType = RefreshType.UNCOMMITED_CHANGES,
+        showError = true,
+    ) { git ->
+        unstageHunkLinesUseCase(git, entry, hunk, lines)
     }
 }
 

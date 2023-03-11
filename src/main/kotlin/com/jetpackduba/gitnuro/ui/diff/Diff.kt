@@ -134,7 +134,15 @@ fun Diff(
                                 diffViewModel.stageHunkLine(entry, hunk, line)
                             else if (diffEntryType is DiffEntryType.StagedDiff)
                                 diffViewModel.unstageHunkLine(entry, hunk, line)
-                        }
+                        },
+                        onActionTriggeredBoth = { entry, hunk, oldLine, newLine ->
+                            val lines: List<Line> = listOfNotNull(oldLine, newLine)
+                            if (diffEntryType is DiffEntryType.UnstagedDiff) {
+                                diffViewModel.stageHunkLines(entry, hunk, lines)
+                            } else if (diffEntryType is DiffEntryType.StagedDiff) {
+                                diffViewModel.unstageHunkLines(entry, hunk, lines)
+                            }
+                        },
                     )
 
                     is DiffResult.Text -> HunkUnifiedTextDiff(
@@ -387,6 +395,7 @@ fun HunkSplitTextDiff(
     onStageHunk: (DiffEntry, Hunk) -> Unit,
     onResetHunk: (DiffEntry, Hunk) -> Unit,
     onActionTriggered: (DiffEntry, Hunk, Line) -> Unit,
+    onActionTriggeredBoth: (DiffEntry, Hunk,  Line?, Line?) -> Unit,
 ) {
     val hunks = diffResult.hunks
 
@@ -429,6 +438,7 @@ fun HunkSplitTextDiff(
                         onActionTriggered = { line ->
                             onActionTriggered(diffResult.diffEntry, splitHunk.sourceHunk, line)
                         },
+                        onActionTriggeredBoth = { onActionTriggeredBoth(diffResult.diffEntry, splitHunk.sourceHunk, linesPair.first, linesPair.second) },
                         onChangeSelectableSide = { newSelectableSide ->
                             if (newSelectableSide != selectableSide) {
                                 selectableSide = newSelectableSide
@@ -458,12 +468,14 @@ fun SplitDiffLine(
     diffEntryType: DiffEntryType,
     onChangeSelectableSide: (SelectableSide) -> Unit,
     onActionTriggered: (Line) -> Unit,
+    onActionTriggeredBoth: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .background(MaterialTheme.colors.secondarySurface)
             .height(IntrinsicSize.Min)
     ) {
+
         SplitDiffLineSide(
             modifier = Modifier
                 .weight(1f),
@@ -477,11 +489,11 @@ fun SplitDiffLine(
             onActionTriggered = { if (oldLine != null) onActionTriggered(oldLine) }
         )
 
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .width(4.dp)
-                .background(MaterialTheme.colors.secondarySurface)
+        SplitDiffLineCenter(
+            diffEntryType = diffEntryType,
+            oldLine = oldLine,
+            newLine = newLine,
+            onActionTriggeredBoth = onActionTriggeredBoth
         )
 
         SplitDiffLineSide(
@@ -497,6 +509,50 @@ fun SplitDiffLine(
             onActionTriggered = { if (newLine != null) onActionTriggered(newLine) }
         )
 
+    }
+}
+
+@Composable
+fun SplitDiffLineCenter(
+    diffEntryType: DiffEntryType,
+    oldLine: Line?,
+    newLine: Line?,
+    onActionTriggeredBoth: () -> Unit
+){
+    Box(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(14.dp)
+            .background(MaterialTheme.colors.secondarySurface)
+    ){
+        if (oldLine != null && newLine != null)
+            if (diffEntryType is DiffEntryType.UncommitedDiff && (oldLine.lineType != LineType.CONTEXT || newLine.lineType != LineType.CONTEXT)) {
+                val color: Color = if (diffEntryType is DiffEntryType.StagedDiff) {
+                    MaterialTheme.colors.error
+                } else {
+                    MaterialTheme.colors.primary
+                }
+
+                val iconName = remember(diffEntryType) {
+                    if (diffEntryType is DiffEntryType.StagedDiff) {
+                        "remove.svg"
+                    } else {
+                        "add.svg"
+                    }
+                }
+
+                Icon(
+                    painterResource(iconName),
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier
+                        .fastClickable(oldLine, newLine) { onActionTriggeredBoth() }
+                        .size(14.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(color)
+                        .align(Alignment.Center),
+                )
+            }
     }
 }
 
