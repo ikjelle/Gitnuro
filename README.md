@@ -1,5 +1,6 @@
 # Fork of Gitnuro
 In this fork I added:
+* Better merge (changed the conflicted things into chunks that also can be discarded)
 * Added setting to flip staging and unstaging
 * Double line staging, (un)staging both REMOVED and ADDED lines
 

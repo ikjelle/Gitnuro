@@ -135,14 +135,16 @@ fun Diff(
                             else if (diffEntryType is DiffEntryType.StagedDiff)
                                 diffViewModel.unstageHunkLine(entry, hunk, line)
                         },
-                        onActionTriggeredBoth = { entry, hunk, oldLine, newLine ->
-                            val lines: List<Line> = listOfNotNull(oldLine, newLine)
+                        onActionTriggeredBoth = { entry, hunk, lines ->
                             if (diffEntryType is DiffEntryType.UnstagedDiff) {
                                 diffViewModel.stageHunkLines(entry, hunk, lines)
                             } else if (diffEntryType is DiffEntryType.StagedDiff) {
                                 diffViewModel.unstageHunkLines(entry, hunk, lines)
                             }
                         },
+                        onTakingConflictedHunk = { entry, hunk, lines ->
+                            diffViewModel.stageHunkConflict(entry, hunk, lines)
+                        }
                     )
 
                     is DiffResult.Text -> HunkUnifiedTextDiff(
@@ -395,10 +397,10 @@ fun HunkSplitTextDiff(
     onStageHunk: (DiffEntry, Hunk) -> Unit,
     onResetHunk: (DiffEntry, Hunk) -> Unit,
     onActionTriggered: (DiffEntry, Hunk, Line) -> Unit,
-    onActionTriggeredBoth: (DiffEntry, Hunk,  Line?, Line?) -> Unit,
+    onActionTriggeredBoth: (DiffEntry, Hunk,  List<Line>) -> Unit,
+    onTakingConflictedHunk: (DiffEntry, Hunk, List<Line>) -> Unit
 ) {
     val hunks = diffResult.hunks
-
     /**
      * Disables selection in one side when the other is being selected
      */
@@ -413,13 +415,56 @@ fun HunkSplitTextDiff(
             for (splitHunk in hunks) {
                 item {
                     DisableSelection {
-                        HunkHeader(
-                            header = splitHunk.sourceHunk.header,
-                            diffEntryType = diffEntryType,
-                            onUnstageHunk = { onUnstageHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
-                            onStageHunk = { onStageHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
-                            onResetHunk = { onResetHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
-                        )
+                        val mergeConflict = diffEntryType.statusType == StatusType.CONFLICTING;
+                        if (mergeConflict) {
+                            val oldLines: MutableList<Line> = mutableListOf()
+                            val hunk1Lines: MutableList<Line> = mutableListOf()
+                            val hunk2Lines: MutableList<Line> = mutableListOf()
+                            var inConflictPart = false
+                            var inHunk1 = true
+                            // put the lines into lists of the different branch hunks
+                            for (line in splitHunk.lines) {
+                                val oldLine = line.first
+                                val newLine = line.second
+
+                                if (oldLine != null && oldLine.lineType != LineType.CONTEXT) oldLines.add(oldLine) // should be not null if goes through if statement
+                                if (newLine != null && newLine.lineType != LineType.CONTEXT) {
+                                    if (newLine.text.startsWith("<<<<<<<")) {
+                                        inConflictPart = true
+                                        inHunk1 = true
+                                    } else if (newLine.text.startsWith("=======")) {
+                                        inHunk1 = false
+                                    } else if (newLine.text.startsWith(">>>>>>>")) {
+                                        inConflictPart = false
+                                    } else if (inConflictPart){
+                                        if (inHunk1){
+                                            hunk1Lines.add(newLine)
+                                        } else {
+                                            hunk2Lines.add(newLine)
+                                        }
+                                    }
+                                }
+                            }
+
+                            MergeHunkHeader(
+                                header = splitHunk.sourceHunk.header,
+                                onResetHunk = { onResetHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
+                                onTakeHunk1 = {
+                                    onTakingConflictedHunk(diffResult.diffEntry, splitHunk.sourceHunk, oldLines + hunk1Lines)
+                                },
+                                onTakeHunk2 = {
+                                    onTakingConflictedHunk(diffResult.diffEntry, splitHunk.sourceHunk, oldLines + hunk2Lines)
+                                }
+                            )
+                        } else {
+                            HunkHeader(
+                                header = splitHunk.sourceHunk.header,
+                                diffEntryType = diffEntryType,
+                                onUnstageHunk = { onUnstageHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
+                                onStageHunk = { onStageHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
+                                onResetHunk = { onResetHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
+                            )
+                        }
                     }
                 }
 
@@ -438,7 +483,7 @@ fun HunkSplitTextDiff(
                         onActionTriggered = { line ->
                             onActionTriggered(diffResult.diffEntry, splitHunk.sourceHunk, line)
                         },
-                        onActionTriggeredBoth = { onActionTriggeredBoth(diffResult.diffEntry, splitHunk.sourceHunk, linesPair.first, linesPair.second) },
+                        onActionTriggeredBoth = { onActionTriggeredBoth(diffResult.diffEntry, splitHunk.sourceHunk, listOfNotNull(linesPair.first, linesPair.second)) },
                         onChangeSelectableSide = { newSelectableSide ->
                             if (newSelectableSide != selectableSide) {
                                 selectableSide = newSelectableSide
@@ -682,6 +727,48 @@ fun HunkHeader(
                 }
             )
         }
+    }
+}
+
+@Composable
+fun MergeHunkHeader(
+    header: String,
+    onResetHunk: () -> Unit,
+    onTakeHunk1: () -> Unit,
+    onTakeHunk2: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .background(MaterialTheme.colors.secondarySurface)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = header,
+            color = MaterialTheme.colors.onBackground,
+            style = MaterialTheme.typography.body1,
+        )
+
+        Spacer(modifier = Modifier.weight(1f))
+        SecondaryButton(
+            text = "Discard hunk",
+            backgroundButton = MaterialTheme.colors.error,
+            textColor = MaterialTheme.colors.onError,
+            onClick = onResetHunk
+        )
+
+        SecondaryButton(
+            text = "Take hunk from branch 1",
+            backgroundButton = MaterialTheme.colors.primary,
+            onClick = { onTakeHunk1() }
+        )
+
+        SecondaryButton(
+            text = "Take hunk from branch 2",
+            backgroundButton = MaterialTheme.colors.primary,
+            onClick = { onTakeHunk2() }
+        )
     }
 }
 
