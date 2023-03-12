@@ -420,6 +420,8 @@ fun HunkSplitTextDiff(
                             val oldLines: MutableList<Line> = mutableListOf()
                             val hunk1Lines: MutableList<Line> = mutableListOf()
                             val hunk2Lines: MutableList<Line> = mutableListOf()
+                            val nonConflictedLines: MutableList<Line> = mutableListOf()
+
                             var inConflictPart = false
                             var inHunk1 = true
                             // put the lines into lists of the different branch hunks
@@ -442,6 +444,8 @@ fun HunkSplitTextDiff(
                                         } else {
                                             hunk2Lines.add(newLine)
                                         }
+                                    } else {
+                                        nonConflictedLines.add(newLine)
                                     }
                                 }
                             }
@@ -450,10 +454,10 @@ fun HunkSplitTextDiff(
                                 header = splitHunk.sourceHunk.header,
                                 onResetHunk = { onResetHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
                                 onTakeHunk1 = {
-                                    onTakingConflictedHunk(diffResult.diffEntry, splitHunk.sourceHunk, oldLines + hunk1Lines)
+                                    onTakingConflictedHunk(diffResult.diffEntry, splitHunk.sourceHunk, oldLines + nonConflictedLines + hunk1Lines)
                                 },
                                 onTakeHunk2 = {
-                                    onTakingConflictedHunk(diffResult.diffEntry, splitHunk.sourceHunk, oldLines + hunk2Lines)
+                                    onTakingConflictedHunk(diffResult.diffEntry, splitHunk.sourceHunk, oldLines + nonConflictedLines + hunk2Lines)
                                 }
                             )
                         } else {
