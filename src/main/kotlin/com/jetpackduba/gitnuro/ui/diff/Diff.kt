@@ -135,14 +135,16 @@ fun Diff(
                             else if (diffEntryType is DiffEntryType.StagedDiff)
                                 diffViewModel.unstageHunkLine(entry, hunk, line)
                         },
-                        onActionTriggeredBoth = { entry, hunk, oldLine, newLine ->
-                            val lines: List<Line> = listOfNotNull(oldLine, newLine)
+                        onActionTriggeredBoth = { entry, hunk, lines ->
                             if (diffEntryType is DiffEntryType.UnstagedDiff) {
                                 diffViewModel.stageHunkLines(entry, hunk, lines)
                             } else if (diffEntryType is DiffEntryType.StagedDiff) {
                                 diffViewModel.unstageHunkLines(entry, hunk, lines)
                             }
                         },
+                        onTakingConflictedHunk = { entry, hunk, lines ->
+                            diffViewModel.stageHunkConflict(entry, hunk, lines)
+                        }
                     )
 
                     is DiffResult.Text -> HunkUnifiedTextDiff(
@@ -395,10 +397,10 @@ fun HunkSplitTextDiff(
     onStageHunk: (DiffEntry, Hunk) -> Unit,
     onResetHunk: (DiffEntry, Hunk) -> Unit,
     onActionTriggered: (DiffEntry, Hunk, Line) -> Unit,
-    onActionTriggeredBoth: (DiffEntry, Hunk,  Line?, Line?) -> Unit,
+    onActionTriggeredBoth: (DiffEntry, Hunk,  List<Line>) -> Unit,
+    onTakingConflictedHunk: (DiffEntry, Hunk, List<Line>) -> Unit
 ) {
     val hunks = diffResult.hunks
-
     /**
      * Disables selection in one side when the other is being selected
      */
@@ -413,13 +415,63 @@ fun HunkSplitTextDiff(
             for (splitHunk in hunks) {
                 item {
                     DisableSelection {
-                        HunkHeader(
-                            header = splitHunk.sourceHunk.header,
-                            diffEntryType = diffEntryType,
-                            onUnstageHunk = { onUnstageHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
-                            onStageHunk = { onStageHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
-                            onResetHunk = { onResetHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
-                        )
+                        if (diffEntryType.statusType == StatusType.CONFLICTING) {
+                            val nonConflictedLines: MutableList<Line> = mutableListOf()
+                            val hunkHEADLines: MutableList<Line> = mutableListOf()
+                            val hunkOtherLines: MutableList<Line> = mutableListOf()
+
+                            var isHEAD = true
+                            var inConflictHunks = false
+                            // put the lines into lists of the different branch hunks
+                            for (line in splitHunk.lines) {
+                                val oldLine = line.first
+                                val newLine = line.second
+
+                                if (oldLine != null && oldLine.lineType != LineType.CONTEXT) nonConflictedLines.add(oldLine) // should be not null if goes through if statement
+                                if (newLine != null && newLine.lineType != LineType.CONTEXT) {
+                                    // Code being literal git-conflict tags will mess up code.
+                                    if (inConflictHunks) {
+                                        if (newLine.text == "=======\n") {
+                                            // if separation line EXACT, flip hunk from HEAD to other branch
+                                            isHEAD = false
+                                        } else if (newLine.text.startsWith(">>>>>>> ")) {
+                                            // close the hunks
+                                            inConflictHunks = false
+                                        } else if (isHEAD){
+                                            hunkHEADLines.add(newLine)
+                                        } else {
+                                            hunkOtherLines.add(newLine)
+                                        }
+                                    } else if (newLine.text == "<<<<<<< HEAD\n") {
+                                        // if opening tag EXACT
+                                        inConflictHunks = true
+                                        isHEAD = true
+                                    } else {
+                                        // all non conflicting lines should be added anyways. If not the user can commit per line basis
+                                        nonConflictedLines.add(newLine)
+                                    }
+                                }
+                            }
+
+                            MergeHunkHeader(
+                                header = splitHunk.sourceHunk.header,
+                                onResetHunk = { onResetHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
+                                onTakeHEAD = {
+                                    onTakingConflictedHunk(diffResult.diffEntry, splitHunk.sourceHunk, nonConflictedLines + hunkHEADLines)
+                                },
+                                onTakeOther = {
+                                    onTakingConflictedHunk(diffResult.diffEntry, splitHunk.sourceHunk, nonConflictedLines + hunkOtherLines)
+                                }
+                            )
+                        } else {
+                            HunkHeader(
+                                header = splitHunk.sourceHunk.header,
+                                diffEntryType = diffEntryType,
+                                onUnstageHunk = { onUnstageHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
+                                onStageHunk = { onStageHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
+                                onResetHunk = { onResetHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
+                            )
+                        }
                     }
                 }
 
@@ -438,7 +490,7 @@ fun HunkSplitTextDiff(
                         onActionTriggered = { line ->
                             onActionTriggered(diffResult.diffEntry, splitHunk.sourceHunk, line)
                         },
-                        onActionTriggeredBoth = { onActionTriggeredBoth(diffResult.diffEntry, splitHunk.sourceHunk, linesPair.first, linesPair.second) },
+                        onActionTriggeredBoth = { onActionTriggeredBoth(diffResult.diffEntry, splitHunk.sourceHunk, listOfNotNull(linesPair.first, linesPair.second)) },
                         onChangeSelectableSide = { newSelectableSide ->
                             if (newSelectableSide != selectableSide) {
                                 selectableSide = newSelectableSide
@@ -682,6 +734,48 @@ fun HunkHeader(
                 }
             )
         }
+    }
+}
+
+@Composable
+fun MergeHunkHeader(
+    header: String,
+    onResetHunk: () -> Unit,
+    onTakeHEAD: () -> Unit,
+    onTakeOther: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .background(MaterialTheme.colors.secondarySurface)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = header,
+            color = MaterialTheme.colors.onBackground,
+            style = MaterialTheme.typography.body1,
+        )
+
+        Spacer(modifier = Modifier.weight(1f))
+        SecondaryButton(
+            text = "Discard hunk",
+            backgroundButton = MaterialTheme.colors.error,
+            textColor = MaterialTheme.colors.onError,
+            onClick = onResetHunk
+        )
+
+        SecondaryButton(
+            text = "Take HEAD",
+            backgroundButton = MaterialTheme.colors.primary,
+            onClick = { onTakeHEAD() }
+        )
+
+        SecondaryButton(
+            text = "Take OTHER",
+            backgroundButton = MaterialTheme.colors.primary,
+            onClick = { onTakeOther() }
+        )
     }
 }
 
