@@ -415,36 +415,39 @@ fun HunkSplitTextDiff(
             for (splitHunk in hunks) {
                 item {
                     DisableSelection {
-                        val mergeConflict = diffEntryType.statusType == StatusType.CONFLICTING;
-                        if (mergeConflict) {
-                            val oldLines: MutableList<Line> = mutableListOf()
-                            val hunk1Lines: MutableList<Line> = mutableListOf()
-                            val hunk2Lines: MutableList<Line> = mutableListOf()
+                        if (diffEntryType.statusType == StatusType.CONFLICTING) {
                             val nonConflictedLines: MutableList<Line> = mutableListOf()
+                            val hunkHEADLines: MutableList<Line> = mutableListOf()
+                            val hunkOtherLines: MutableList<Line> = mutableListOf()
 
-                            var inConflictPart = false
-                            var inHunk1 = true
+                            var isHEAD = true
+                            var inConflictHunks = false
                             // put the lines into lists of the different branch hunks
                             for (line in splitHunk.lines) {
                                 val oldLine = line.first
                                 val newLine = line.second
 
-                                if (oldLine != null && oldLine.lineType != LineType.CONTEXT) oldLines.add(oldLine) // should be not null if goes through if statement
+                                if (oldLine != null && oldLine.lineType != LineType.CONTEXT) nonConflictedLines.add(oldLine) // should be not null if goes through if statement
                                 if (newLine != null && newLine.lineType != LineType.CONTEXT) {
-                                    if (newLine.text.startsWith("<<<<<<<")) {
-                                        inConflictPart = true
-                                        inHunk1 = true
-                                    } else if (newLine.text.startsWith("=======")) {
-                                        inHunk1 = false
-                                    } else if (newLine.text.startsWith(">>>>>>>")) {
-                                        inConflictPart = false
-                                    } else if (inConflictPart){
-                                        if (inHunk1){
-                                            hunk1Lines.add(newLine)
+                                    // Code being literal git-conflict tags will mess up code.
+                                    if (inConflictHunks) {
+                                        if (newLine.text == "=======\n") {
+                                            // if separation line EXACT, flip hunk from HEAD to other branch
+                                            isHEAD = false
+                                        } else if (newLine.text.startsWith(">>>>>>> ")) {
+                                            // close the hunks
+                                            inConflictHunks = false
+                                        } else if (isHEAD){
+                                            hunkHEADLines.add(newLine)
                                         } else {
-                                            hunk2Lines.add(newLine)
+                                            hunkOtherLines.add(newLine)
                                         }
+                                    } else if (newLine.text == "<<<<<<< HEAD\n") {
+                                        // if opening tag EXACT
+                                        inConflictHunks = true
+                                        isHEAD = true
                                     } else {
+                                        // all non conflicting lines should be added anyways. If not the user can commit per line basis
                                         nonConflictedLines.add(newLine)
                                     }
                                 }
@@ -453,11 +456,11 @@ fun HunkSplitTextDiff(
                             MergeHunkHeader(
                                 header = splitHunk.sourceHunk.header,
                                 onResetHunk = { onResetHunk(diffResult.diffEntry, splitHunk.sourceHunk) },
-                                onTakeHunk1 = {
-                                    onTakingConflictedHunk(diffResult.diffEntry, splitHunk.sourceHunk, oldLines + nonConflictedLines + hunk1Lines)
+                                onTakeHEAD = {
+                                    onTakingConflictedHunk(diffResult.diffEntry, splitHunk.sourceHunk, nonConflictedLines + hunkHEADLines)
                                 },
-                                onTakeHunk2 = {
-                                    onTakingConflictedHunk(diffResult.diffEntry, splitHunk.sourceHunk, oldLines + nonConflictedLines + hunk2Lines)
+                                onTakeOther = {
+                                    onTakingConflictedHunk(diffResult.diffEntry, splitHunk.sourceHunk, nonConflictedLines + hunkOtherLines)
                                 }
                             )
                         } else {
@@ -738,8 +741,8 @@ fun HunkHeader(
 fun MergeHunkHeader(
     header: String,
     onResetHunk: () -> Unit,
-    onTakeHunk1: () -> Unit,
-    onTakeHunk2: () -> Unit
+    onTakeHEAD: () -> Unit,
+    onTakeOther: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -763,15 +766,15 @@ fun MergeHunkHeader(
         )
 
         SecondaryButton(
-            text = "Take hunk from branch 1",
+            text = "Take HEAD",
             backgroundButton = MaterialTheme.colors.primary,
-            onClick = { onTakeHunk1() }
+            onClick = { onTakeHEAD() }
         )
 
         SecondaryButton(
-            text = "Take hunk from branch 2",
+            text = "Take OTHER",
             backgroundButton = MaterialTheme.colors.primary,
-            onClick = { onTakeHunk2() }
+            onClick = { onTakeOther() }
         )
     }
 }
