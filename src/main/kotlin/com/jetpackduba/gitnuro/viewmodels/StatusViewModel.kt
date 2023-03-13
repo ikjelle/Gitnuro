@@ -288,6 +288,10 @@ class StatusViewModel @Inject constructor(
         persistMessage()
         _commitMessageChangesFlow.emit(savedCommitMessage.message)
     }
+
+    fun getDirectory(): String {
+        return tabState.git.repository.directory.absolutePath.dropLast(4) // Drop .git ends in /
+    }
 }
 
 sealed class StageStatus {

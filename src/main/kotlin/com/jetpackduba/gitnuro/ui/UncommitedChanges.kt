@@ -127,6 +127,7 @@ fun UncommitedChanges(
                 },
                 onGenerateContextMenu = { statusEntry ->
                     statusEntriesContextMenuItems(
+                        fullPath = statusViewModel.getDirectory() + statusEntry.filePath,
                         statusEntry = statusEntry,
                         entryType = EntryType.STAGED,
                         onBlame = { onBlameFile(statusEntry.filePath) },
@@ -160,6 +161,7 @@ fun UncommitedChanges(
                 },
                 onGenerateContextMenu = { statusEntry ->
                     statusEntriesContextMenuItems(
+                        fullPath = statusViewModel.getDirectory() + statusEntry.filePath,
                         statusEntry = statusEntry,
                         entryType = EntryType.UNSTAGED,
                         onBlame = { onBlameFile(statusEntry.filePath) },

@@ -1,8 +1,13 @@
 package com.jetpackduba.gitnuro.ui.context_menu
 
 import androidx.compose.ui.res.painterResource
+import com.jetpackduba.gitnuro.extensions.fileName
+import com.jetpackduba.gitnuro.extensions.parentDirectoryPath
 import com.jetpackduba.gitnuro.git.workspace.StatusEntry
 import com.jetpackduba.gitnuro.git.workspace.StatusType
+import java.awt.Toolkit
+import java.awt.datatransfer.Clipboard
+import java.awt.datatransfer.StringSelection
 
 fun statusEntriesContextMenuItems(
     statusEntry: StatusEntry,
@@ -11,8 +16,21 @@ fun statusEntriesContextMenuItems(
     onDelete: () -> Unit = {},
     onBlame: () -> Unit,
     onHistory: () -> Unit,
+    fullPath: String
 ): List<ContextMenuElement> {
     return mutableListOf<ContextMenuElement>().apply {
+        add(
+            ContextMenuElement.ContextTextEntry(
+                label = "Copy full path",
+//                icon = { painterResource("undo.svg") },
+                onClick = {
+                    val selection = StringSelection(fullPath)
+                    val clipboard: Clipboard = Toolkit.getDefaultToolkit().systemClipboard
+                    clipboard.setContents(selection, selection)
+                },
+            )
+        )
+
         if (statusEntry.statusType != StatusType.ADDED) {
             add(
                 ContextMenuElement.ContextTextEntry(
