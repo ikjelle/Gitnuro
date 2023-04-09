@@ -71,7 +71,7 @@ class App {
     fun start(args: Array<String>) {
         val windowPlacement = appSettings.windowPlacement.toWindowPlacement
         val dirToOpen = getDirToOpen(args)
-        var defaultSelectedTabKey = appSettings.latestTabsIndex
+        var defaultSelectedTabKey: Int
 
         appStateManager.loadRepositoriesTabs()
 
@@ -85,6 +85,11 @@ class App {
         }
 
         loadTabs()
+        defaultSelectedTabKey = appSettings.latestTabsIndex
+        if (defaultSelectedTabKey >= tabsFlow.value.size)
+            defaultSelectedTabKey = tabsFlow.value.size - 1
+        println(defaultSelectedTabKey)
+
 
         GpgSigner.setDefault(appGpgSigner)
 
@@ -200,7 +205,9 @@ class App {
                     addTab(tabInfo)
                 },
                 onRemoveTab = { key ->
-                    removeTab(key)
+                    removeTab(key).invokeOnCompletion {
+                        setTabIndex(tabsInformationList.find { it.key == selectedTabKey.value }!!)
+                    }
                 }
             )
 
@@ -223,6 +230,11 @@ class App {
 
     fun addTab(tabInformation: TabInformation) = appStateManager.appScope.launch(Dispatchers.IO) {
         tabsFlow.value = tabsFlow.value.toMutableList().apply { add(tabInformation) }
+        setTabIndex(tabInformation)
+    }
+
+    fun setTabIndex(tabInformation: TabInformation) = appStateManager.appScope.launch(Dispatchers.IO) {
+        appSettings.latestTabsIndex = tabsFlow.value.indexOf(tabInformation)
     }
 
     @Composable
@@ -243,10 +255,10 @@ class App {
                 selectedTabKey = selectedTabKey.value,
                 onTabSelected = { newSelectedTabKey ->
                     selectedTabKey.value = newSelectedTabKey
-                },
-                onTabSelectedGetIndex = { index ->
-                    // the tab key keeps increment throughout the program, but the index is always
-                    appSettings.latestTabsIndex = index
+                    val tab = tabsInformationList.find { it.key == newSelectedTabKey }
+                    tab?.let {
+                        setTabIndex(it)
+                    }
                 },
                 onTabClosed = onRemoveTab
             ) { key ->

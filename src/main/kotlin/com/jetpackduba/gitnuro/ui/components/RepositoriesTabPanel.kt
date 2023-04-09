@@ -45,7 +45,6 @@ fun RepositoriesTabPanel(
     tabs: List<TabInformation>,
     selectedTabKey: Int,
     onTabSelected: (Int) -> Unit,
-    onTabSelectedGetIndex: (Int) -> Unit,
     onTabClosed: (Int) -> Unit,
     newTabContent: (key: Int) -> TabInformation,
 ) {
@@ -96,9 +95,6 @@ fun RepositoriesTabPanel(
                         title = tab.tabName,
                         isSelected = tab.key == selectedTabKey,
                         onClick = {
-                            if (tab::class == TabInformation::class) {
-                                onTabSelectedGetIndex(tabs.indexOf((tab)))
-                            }
                             onTabSelected(tab.key)
                         },
                         onCloseTab = {
