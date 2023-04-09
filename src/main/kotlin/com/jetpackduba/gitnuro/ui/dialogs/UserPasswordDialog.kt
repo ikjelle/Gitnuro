@@ -1,10 +1,8 @@
 package com.jetpackduba.gitnuro.ui.dialogs
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.Icon
 import androidx.compose.material.MaterialTheme
-import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -15,13 +13,14 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.jetpackduba.gitnuro.AppIcons
 import com.jetpackduba.gitnuro.keybindings.KeybindingOption
 import com.jetpackduba.gitnuro.keybindings.matchesBinding
 import com.jetpackduba.gitnuro.theme.onBackgroundSecondary
-import com.jetpackduba.gitnuro.theme.outlinedTextFieldColors
 import com.jetpackduba.gitnuro.ui.components.AdjustableOutlinedTextField
 import com.jetpackduba.gitnuro.ui.components.PrimaryButton
 
@@ -46,11 +45,11 @@ fun UserPasswordDialog(
             verticalArrangement = Arrangement.Center,
         ) {
             Icon(
-                painterResource("lock.svg"),
+                painterResource(AppIcons.LOCK),
                 contentDescription = null,
                 modifier = Modifier
-                    .size(64.dp)
-                    .padding(vertical = 16.dp),
+                    .padding(bottom = 16.dp)
+                    .size(64.dp),
                 tint = MaterialTheme.colors.onBackground,
             )
 
@@ -60,13 +59,14 @@ fun UserPasswordDialog(
                     .padding(bottom = 8.dp),
                 color = MaterialTheme.colors.onBackground,
                 style = MaterialTheme.typography.body1,
+                fontWeight = FontWeight.SemiBold,
             )
 
             Text(
                 text = "Your remote requires authentication with a\nusername and a password",
                 modifier = Modifier
                     .padding(bottom = 16.dp),
-                color = MaterialTheme.colors.onBackgroundSecondary,
+                color = MaterialTheme.colors.onBackground,
                 style = MaterialTheme.typography.body2,
                 textAlign = TextAlign.Center,
             )

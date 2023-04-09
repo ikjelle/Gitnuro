@@ -1,6 +1,7 @@
 package com.jetpackduba.gitnuro.extensions
 
 import com.jetpackduba.gitnuro.logging.printLog
+import java.io.File
 import java.io.IOException
 import java.util.*
 
@@ -25,10 +26,18 @@ fun runCommand(command: String): String? {
     }
 }
 
+fun runCommandInPath(command: String, path: String) {
+    val processBuilder = ProcessBuilder(command).apply {
+        directory(File(path))
+    }
+
+    processBuilder.start()
+}
+
 fun runCommandWithoutResult(command: String, args: String, file: String): Boolean {
     val parts: Array<String> = prepareCommand(command, args, file)
 
-    printLog(TAG, "Running command ${parts.joinToString( )}")
+    printLog(TAG, "Running command ${parts.joinToString()}")
 
     return try {
         val p = Runtime.getRuntime().exec(parts) ?: return false

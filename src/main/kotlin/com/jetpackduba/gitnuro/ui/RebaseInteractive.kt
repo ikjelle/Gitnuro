@@ -11,7 +11,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.jetpackduba.gitnuro.theme.textButtonColors
+import com.jetpackduba.gitnuro.AppIcons
 import com.jetpackduba.gitnuro.ui.components.AdjustableOutlinedTextField
 import com.jetpackduba.gitnuro.ui.components.PrimaryButton
 import com.jetpackduba.gitnuro.ui.components.ScrollableLazyColumn
@@ -148,7 +148,7 @@ fun RebaseCommit(
                 onMessageChanged(it)
             },
             textStyle = MaterialTheme.typography.body2,
-            backgroundColor = if(rebaseLine.action == Action.REWORD) {
+            backgroundColor = if (rebaseLine.action == Action.REWORD) {
                 MaterialTheme.colors.background
             } else
                 MaterialTheme.colors.surface
@@ -181,7 +181,7 @@ fun ActionDropdown(
             )
 
             Icon(
-                painterResource("expand_more.svg"),
+                painterResource(AppIcons.EXPAND_MORE),
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colors.onBackground,

@@ -7,7 +7,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.*
+import androidx.compose.material.Icon
+import androidx.compose.material.IconButton
+import androidx.compose.material.MaterialTheme
+import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -18,9 +21,11 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.jetpackduba.gitnuro.AppIcons
 import com.jetpackduba.gitnuro.extensions.handMouseClickable
 import com.jetpackduba.gitnuro.extensions.handOnHover
 import com.jetpackduba.gitnuro.extensions.ignoreKeyEvents
+import com.jetpackduba.gitnuro.git.remote_operations.PullType
 import com.jetpackduba.gitnuro.ui.components.gitnuroViewModel
 import com.jetpackduba.gitnuro.ui.context_menu.*
 import com.jetpackduba.gitnuro.viewmodels.MenuViewModel
@@ -36,6 +41,8 @@ fun Menu(
     onQuickActions: () -> Unit,
     onShowSettingsDialog: () -> Unit,
 ) {
+    val isPullWithRebaseDefault by menuViewModel.isPullWithRebaseDefault.collectAsState()
+
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.Center,
@@ -45,7 +52,7 @@ fun Menu(
             modifier = Modifier
                 .padding(start = 16.dp),
             title = "Open",
-            icon = painterResource("open.svg"),
+            icon = painterResource(AppIcons.OPEN),
             onClick = onOpenAnotherRepository,
         )
 
@@ -54,11 +61,19 @@ fun Menu(
         ExtendedMenuButton(
             modifier = Modifier.padding(end = 4.dp),
             title = "Pull",
-            icon = painterResource("download.svg"),
-            onClick = { menuViewModel.pull() },
+            icon = painterResource(AppIcons.DOWNLOAD),
+            onClick = { menuViewModel.pull(PullType.DEFAULT) },
             extendedListItems = pullContextMenuItems(
-                onPullRebase = {
-                    menuViewModel.pull(true)
+                isPullWithRebaseDefault = isPullWithRebaseDefault,
+                onPullWith = {
+                    // Do the reverse of the default
+                    val pullType = if (isPullWithRebaseDefault) {
+                        PullType.MERGE
+                    } else {
+                        PullType.REBASE
+                    }
+
+                    menuViewModel.pull(pullType = pullType)
                 },
                 onFetchAll = {
                     menuViewModel.fetchAll()
@@ -68,7 +83,7 @@ fun Menu(
 
         ExtendedMenuButton(
             title = "Push",
-            icon = painterResource("upload.svg"),
+            icon = painterResource(AppIcons.UPLOAD),
             onClick = { menuViewModel.push() },
             extendedListItems = pushContextMenuItems(
                 onPushWithTags = {
@@ -84,7 +99,7 @@ fun Menu(
 
         MenuButton(
             title = "Branch",
-            icon = painterResource("branch.svg"),
+            icon = painterResource(AppIcons.BRANCH),
         ) {
             onCreateBranch()
         }
@@ -101,7 +116,7 @@ fun Menu(
         ExtendedMenuButton(
             modifier = Modifier.padding(end = 4.dp),
             title = "Stash",
-            icon = painterResource("stash.svg"),
+            icon = painterResource(AppIcons.STASH),
             onClick = { menuViewModel.stash() },
             extendedListItems = stashContextMenuItems(
                 onStashWithMessage = onStashWithMessage
@@ -110,29 +125,29 @@ fun Menu(
 
         MenuButton(
             title = "Pop",
-            icon = painterResource("apply_stash.svg"),
+            icon = painterResource(AppIcons.APPLY_STASH),
         ) { menuViewModel.popStash() }
 
         Spacer(modifier = Modifier.weight(1f))
 
-//        MenuButton(
-//            modifier = Modifier.padding(end = 4.dp),
-//            title = "Terminal",
-//            icon = painterResource("terminal.svg"),
-//            onClick = onQuickActions,
-//        )
+        MenuButton(
+            modifier = Modifier.padding(end = 4.dp),
+            title = "Terminal",
+            icon = painterResource(AppIcons.TERMINAL),
+            onClick = { menuViewModel.openTerminal() },
+        )
 
         MenuButton(
             modifier = Modifier.padding(end = 4.dp),
             title = "Actions",
-            icon = painterResource("bolt.svg"),
+            icon = painterResource(AppIcons.BOLT),
             onClick = onQuickActions,
         )
 
         MenuButton(
             modifier = Modifier.padding(end = 16.dp),
             title = "Settings",
-            icon = painterResource("settings.svg"),
+            icon = painterResource(AppIcons.SETTINGS),
             onClick = onShowSettingsDialog,
         )
     }
@@ -180,25 +195,20 @@ fun ExtendedMenuButton(
     title: String,
     icon: Painter,
     onClick: () -> Unit,
-    extendedListItems: List<DropDownContentData>,
+    extendedListItems: List<ContextMenuElement>,
 ) {
-    var showDropDownMenu by remember { mutableStateOf(false) }
-
     Row(
         modifier = modifier
             .size(width = 64.dp, height = 56.dp)
             .ignoreKeyEvents()
             .clip(RoundedCornerShape(4.dp))
             .background(MaterialTheme.colors.surface)
-            .handMouseClickable {
-                showDropDownMenu = true
-            }
+            .handMouseClickable { if (enabled) onClick() }
     ) {
         Column(
             modifier = Modifier
                 .fillMaxHeight()
-                .weight(1f)
-                .handMouseClickable { if (enabled) onClick() },
+                .weight(1f),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -217,31 +227,24 @@ fun ExtendedMenuButton(
             )
         }
 
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .ignoreKeyEvents(),
-            contentAlignment = Alignment.Center,
+        DropdownMenu(
+            items = { extendedListItems }
         ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .ignoreKeyEvents(),
+                contentAlignment = Alignment.Center,
+            ) {
 
-            Icon(
-                painterResource("expand_more.svg"),
-                contentDescription = null,
-                tint = MaterialTheme.colors.onBackground,
-                modifier = Modifier.size(16.dp)
-            )
+                Icon(
+                    painterResource(AppIcons.EXPAND_MORE),
+                    contentDescription = null,
+                    tint = MaterialTheme.colors.onBackground,
+                    modifier = Modifier.size(16.dp)
+                )
 
-            DropdownMenu(
-                onDismissRequest = {
-                    showDropDownMenu = false
-                },
-                content = {
-                    for (item in extendedListItems) {
-                        DropDownContent(item, onDismiss = { showDropDownMenu = false })
-                    }
-                },
-                expanded = showDropDownMenu,
-            )
+            }
         }
     }
 }

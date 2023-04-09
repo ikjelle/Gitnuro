@@ -13,13 +13,17 @@ import androidx.compose.ui.awt.awtEventOrNull
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.*
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.*
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import com.jetpackduba.gitnuro.extensions.awaitFirstDownEvent
+import com.jetpackduba.gitnuro.extensions.handMouseClickable
+import com.jetpackduba.gitnuro.extensions.handOnHover
 import com.jetpackduba.gitnuro.keybindings.KeybindingOption
 import com.jetpackduba.gitnuro.keybindings.matchesBinding
 import com.jetpackduba.gitnuro.theme.onBackgroundSecondary
@@ -32,6 +36,13 @@ private const val MIN_TIME_BETWEEN_POPUPS = 20
 @Composable
 fun ContextMenu(items: () -> List<ContextMenuElement>, function: @Composable () -> Unit) {
     Box(modifier = Modifier.contextMenu(items), propagateMinConstraints = true) {
+        function()
+    }
+}
+
+@Composable
+fun DropdownMenu(items: () -> List<ContextMenuElement>, function: @Composable () -> Unit) {
+    Box(modifier = Modifier.dropdownMenu(items), propagateMinConstraints = true) {
         function()
     }
 }
@@ -66,7 +77,34 @@ private fun Modifier.contextMenu(items: () -> List<ContextMenuElement>): Modifie
             lastMouseEventState.x,
             lastMouseEventState.y,
             items(),
-            onDismissRequest = { setLastMouseEventState(null) })
+            onDismissRequest = { setLastMouseEventState(null) }
+        )
+    }
+
+    return mod
+}
+
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun Modifier.dropdownMenu(items: () -> List<ContextMenuElement>): Modifier {
+    val (isClicked, setIsClicked) = remember { mutableStateOf(false) }
+    val (offset, setOffset) = remember { mutableStateOf<Offset?>(null) }
+    val mod = this
+        .onGloballyPositioned { layoutCoordinates ->
+            val offsetToRoot = layoutCoordinates.localToRoot(Offset.Zero)
+            val offsetToBottomOfComponent = offsetToRoot.copy(y = offsetToRoot.y + layoutCoordinates.size.height)
+            setOffset(offsetToBottomOfComponent)
+        }
+        .handMouseClickable {
+            setIsClicked(true)
+        }
+
+    if (offset != null && isClicked) {
+        showPopup(
+            offset.x.toInt(),
+            offset.y.toInt(),
+            items(),
+            onDismissRequest = { setIsClicked(false) })
     }
 
     return mod

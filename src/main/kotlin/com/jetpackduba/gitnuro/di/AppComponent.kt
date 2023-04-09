@@ -1,12 +1,12 @@
 package com.jetpackduba.gitnuro.di
 
 import com.jetpackduba.gitnuro.App
+import com.jetpackduba.gitnuro.AppEnvInfo
 import com.jetpackduba.gitnuro.AppStateManager
 import com.jetpackduba.gitnuro.credentials.CredentialsStateManager
 import com.jetpackduba.gitnuro.di.modules.AppModule
-import com.jetpackduba.gitnuro.di.modules.NetworkModule
-import com.jetpackduba.gitnuro.di.modules.TabModule
 import com.jetpackduba.gitnuro.preferences.AppSettings
+import com.jetpackduba.gitnuro.ui.TabsManager
 import com.jetpackduba.gitnuro.viewmodels.SettingsViewModel
 import dagger.Component
 import javax.inject.Singleton
@@ -24,4 +24,8 @@ interface AppComponent {
     fun credentialsStateManager(): CredentialsStateManager
 
     fun appPreferences(): AppSettings
+
+    fun appEnvInfo(): AppEnvInfo
+
+    fun tabsManager(): TabsManager
 }

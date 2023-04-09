@@ -3,7 +3,6 @@ package com.jetpackduba.gitnuro.viewmodels
 import com.jetpackduba.gitnuro.AppStateManager
 import com.jetpackduba.gitnuro.ErrorsManager
 import com.jetpackduba.gitnuro.credentials.CredentialsAccepted
-import com.jetpackduba.gitnuro.credentials.CredentialsRequested
 import com.jetpackduba.gitnuro.credentials.CredentialsState
 import com.jetpackduba.gitnuro.credentials.CredentialsStateManager
 import com.jetpackduba.gitnuro.git.*
@@ -12,6 +11,7 @@ import com.jetpackduba.gitnuro.git.rebase.AbortRebaseUseCase
 import com.jetpackduba.gitnuro.git.repository.GetRepositoryStateUseCase
 import com.jetpackduba.gitnuro.git.repository.InitLocalRepositoryUseCase
 import com.jetpackduba.gitnuro.git.repository.OpenRepositoryUseCase
+import com.jetpackduba.gitnuro.git.repository.OpenSubmoduleRepositoryUseCase
 import com.jetpackduba.gitnuro.git.stash.StashChangesUseCase
 import com.jetpackduba.gitnuro.git.workspace.StageUntrackedFileUseCase
 import com.jetpackduba.gitnuro.logging.printLog
@@ -21,7 +21,8 @@ import com.jetpackduba.gitnuro.ui.SelectedItem
 import com.jetpackduba.gitnuro.updates.Update
 import com.jetpackduba.gitnuro.updates.UpdatesRepository
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.api.errors.CheckoutConflictException
 import org.eclipse.jgit.blame.BlameResult
@@ -46,6 +47,7 @@ class TabViewModel @Inject constructor(
     private val getRepositoryStateUseCase: GetRepositoryStateUseCase,
     private val initLocalRepositoryUseCase: InitLocalRepositoryUseCase,
     private val openRepositoryUseCase: OpenRepositoryUseCase,
+    private val openSubmoduleRepositoryUseCase: OpenSubmoduleRepositoryUseCase,
     private val diffViewModelProvider: Provider<DiffViewModel>,
     private val rebaseInteractiveViewModelProvider: Provider<RebaseInteractiveViewModel>,
     private val historyViewModelProvider: Provider<HistoryViewModel>,
@@ -72,7 +74,7 @@ class TabViewModel @Inject constructor(
     val repositorySelectionStatus: StateFlow<RepositorySelectionStatus>
         get() = _repositorySelectionStatus
 
-    val processing: StateFlow<Boolean> = tabState.processing
+    val processing: StateFlow<ProcessingState> = tabState.processing
 
     val credentialsState: StateFlow<CredentialsState> = credentialsStateManager.credentialsState
 
@@ -136,6 +138,12 @@ class TabViewModel @Inject constructor(
                     loadRepositoryState(tabState.git)
                 }
             }
+
+            launch {
+                errorsManager.error.collect {
+                    showError.value = true
+                }
+            }
         }
     }
 
@@ -159,15 +167,25 @@ class TabViewModel @Inject constructor(
 
         _repositorySelectionStatus.value = RepositorySelectionStatus.Opening(directory.absolutePath)
 
-        val repository: Repository = openRepositoryUseCase(directory)
-
         try {
+            val repository: Repository = if (directory.listFiles()?.any { it.name == ".git" && it.isFile } == true) {
+                openSubmoduleRepositoryUseCase(directory)
+            } else {
+                openRepositoryUseCase(directory)
+            }
+
+
             repository.workTree // test if repository is valid
             _repositorySelectionStatus.value = RepositorySelectionStatus.Open(repository)
             val git = Git(repository)
             tabState.initGit(git)
 
-            onRepositoryChanged(repository.directory.parent)
+            val path = if(directory.name == ".git") {
+                directory.parent
+            } else
+                directory.absolutePath
+
+            onRepositoryChanged(path)
             tabState.newSelectedItem(selectedItem = SelectedItem.UncommitedChanges)
             newDiffSelected = null
             refreshRepositoryInfo()
@@ -175,7 +193,6 @@ class TabViewModel @Inject constructor(
             watchRepositoryChanges(git)
         } catch (ex: Exception) {
             ex.printStackTrace()
-            onRepositoryChanged(null)
             errorsManager.addError(newErrorNow(ex, ex.localizedMessage))
             _repositorySelectionStatus.value = RepositorySelectionStatus.None
         }
@@ -307,8 +324,7 @@ class TabViewModel @Inject constructor(
         credentialsStateManager.updateState(CredentialsAccepted.SshCredentialsAccepted(password))
     }
 
-    var onRepositoryChanged: (path: String?) -> Unit = {}
-
+    var onRepositoryChanged: (path: String) -> Unit = {}
 
     fun dispose() {
         tabScope.cancel()
@@ -445,6 +461,10 @@ class TabViewModel @Inject constructor(
 
     fun gpgCredentialsAccepted(password: String) {
         credentialsStateManager.updateState(CredentialsAccepted.GpgCredentialsAccepted(password))
+    }
+
+    fun cancelOngoingTask() {
+        tabState.cancelCurrentTask()
     }
 }
 

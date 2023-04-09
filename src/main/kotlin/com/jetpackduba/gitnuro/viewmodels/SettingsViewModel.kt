@@ -1,6 +1,8 @@
 package com.jetpackduba.gitnuro.viewmodels
 
+import com.jetpackduba.gitnuro.Error
 import com.jetpackduba.gitnuro.di.qualifiers.AppCoroutineScope
+import com.jetpackduba.gitnuro.newErrorNow
 import com.jetpackduba.gitnuro.preferences.AppSettings
 import com.jetpackduba.gitnuro.theme.Theme
 import kotlinx.coroutines.CoroutineScope
@@ -18,6 +20,7 @@ class SettingsViewModel @Inject constructor(
 
     val themeState = appSettings.themeState
     val ffMergeFlow = appSettings.ffMergeFlow
+    val pullRebaseFlow = appSettings.pullRebaseFlow
     val commitsLimitEnabledFlow = appSettings.commitsLimitEnabledFlow
 
     var scaleUi: Float
@@ -38,14 +41,26 @@ class SettingsViewModel @Inject constructor(
             appSettings.ffMerge = value
         }
 
+    var pullRebase: Boolean
+        get() = appSettings.pullRebase
+        set(value) {
+            appSettings.pullRebase = value
+        }
+
     var theme: Theme
         get() = appSettings.theme
         set(value) {
             appSettings.theme = value
         }
 
-    fun saveCustomTheme(filePath: String) {
-        appSettings.saveCustomTheme(filePath)
+    fun saveCustomTheme(filePath: String): Error? {
+        return try {
+            appSettings.saveCustomTheme(filePath)
+            null
+        } catch (ex: Exception) {
+            ex.printStackTrace()
+            newErrorNow(ex, "Failed to parse selected theme JSON. Please check if it's valid and try again.")
+        }
     }
 
 

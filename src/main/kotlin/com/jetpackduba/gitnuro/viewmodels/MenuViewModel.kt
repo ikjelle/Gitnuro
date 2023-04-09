@@ -4,10 +4,13 @@ import com.jetpackduba.gitnuro.git.RefreshType
 import com.jetpackduba.gitnuro.git.TabState
 import com.jetpackduba.gitnuro.git.remote_operations.FetchAllBranchesUseCase
 import com.jetpackduba.gitnuro.git.remote_operations.PullBranchUseCase
+import com.jetpackduba.gitnuro.git.remote_operations.PullType
 import com.jetpackduba.gitnuro.git.remote_operations.PushBranchUseCase
 import com.jetpackduba.gitnuro.git.stash.PopLastStashUseCase
 import com.jetpackduba.gitnuro.git.stash.StashChangesUseCase
 import com.jetpackduba.gitnuro.git.workspace.StageUntrackedFileUseCase
+import com.jetpackduba.gitnuro.preferences.AppSettings
+import com.jetpackduba.gitnuro.terminal.OpenRepositoryInTerminalUseCase
 import javax.inject.Inject
 
 class MenuViewModel @Inject constructor(
@@ -18,17 +21,24 @@ class MenuViewModel @Inject constructor(
     private val popLastStashUseCase: PopLastStashUseCase,
     private val stashChangesUseCase: StashChangesUseCase,
     private val stageUntrackedFileUseCase: StageUntrackedFileUseCase,
+    private val openRepositoryInTerminalUseCase: OpenRepositoryInTerminalUseCase,
+    private val settings: AppSettings,
 ) {
-    fun pull(rebase: Boolean = false) = tabState.safeProcessing(
+    val isPullWithRebaseDefault = settings.pullRebaseFlow
+
+    fun pull(pullType: PullType) = tabState.safeProcessing(
         refreshType = RefreshType.ALL_DATA,
         refreshEvenIfCrashes = true,
     ) { git ->
-        pullBranchUseCase(git, rebase)
+        pullBranchUseCase(git, pullType)
     }
 
     fun fetchAll() = tabState.safeProcessing(
         refreshType = RefreshType.ALL_DATA,
         refreshEvenIfCrashes = true,
+        title = "Fetching",
+        subtitle = "Updating references from the remote repositories...",
+        isCancellable = true
     ) { git ->
         fetchAllBranchesUseCase(git)
     }
@@ -36,6 +46,9 @@ class MenuViewModel @Inject constructor(
     fun push(force: Boolean = false, pushTags: Boolean = false) = tabState.safeProcessing(
         refreshType = RefreshType.ALL_DATA,
         refreshEvenIfCrashes = true,
+        title = "Push",
+        subtitle = "Pushing current branch to the remote repository",
+        isCancellable = true,
     ) { git ->
         pushBranchUseCase(git, force, pushTags)
     }
@@ -52,5 +65,11 @@ class MenuViewModel @Inject constructor(
         refreshEvenIfCrashes = true,
     ) { git ->
         popLastStashUseCase(git)
+    }
+
+    fun openTerminal() = tabState.runOperation(
+        refreshType = RefreshType.NONE
+    ) { git ->
+        openRepositoryInTerminalUseCase(git.repository.directory.parent)
     }
 }
