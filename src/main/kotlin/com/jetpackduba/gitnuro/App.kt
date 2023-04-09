@@ -71,7 +71,7 @@ class App {
     fun start(args: Array<String>) {
         val windowPlacement = appSettings.windowPlacement.toWindowPlacement
         val dirToOpen = getDirToOpen(args)
-        var defaultSelectedTabKey = 0
+        var defaultSelectedTabKey = appSettings.latestTabsIndex
 
         appStateManager.loadRepositoriesTabs()
 
@@ -243,6 +243,10 @@ class App {
                 selectedTabKey = selectedTabKey.value,
                 onTabSelected = { newSelectedTabKey ->
                     selectedTabKey.value = newSelectedTabKey
+                },
+                onTabSelectedGetIndex = { index ->
+                    // the tab key keeps increment throughout the program, but the index is always
+                    appSettings.latestTabsIndex = index
                 },
                 onTabClosed = onRemoveTab
             ) { key ->

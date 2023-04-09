@@ -19,6 +19,7 @@ import javax.inject.Singleton
 private const val PREFERENCES_NAME = "GitnuroConfig"
 
 private const val PREF_LATEST_REPOSITORIES_TABS_OPENED = "latestRepositoriesTabsOpened"
+private const val PREF_LATEST_OPENED_TAB_INDEX = "lastOpenedTabIndex"
 private const val PREF_LAST_OPENED_REPOSITORIES_PATH = "lastOpenedRepositoriesList"
 private const val PREF_THEME = "theme"
 private const val PREF_COMMITS_LIMIT = "commitsLimit"
@@ -70,6 +71,11 @@ class AppSettings @Inject constructor() {
         set(value) {
             preferences.put(PREF_LATEST_REPOSITORIES_TABS_OPENED, value)
         }
+    var latestTabsIndex: Int
+        get() = preferences.getInt(PREF_LATEST_OPENED_TAB_INDEX, 0)
+        set(value) {
+            preferences.putInt(PREF_LATEST_OPENED_TAB_INDEX, value)
+    }
 
     var latestOpenedRepositoriesPath: String
         get() = preferences.get(PREF_LAST_OPENED_REPOSITORIES_PATH, "")
