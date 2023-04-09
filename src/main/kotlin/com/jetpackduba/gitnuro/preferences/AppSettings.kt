@@ -32,6 +32,7 @@ private const val PREF_STAGING_LAYOUT_REVERSED = "stagingLayoutReversed"
 
 
 private const val PREF_GIT_FF_MERGE = "gitFFMerge"
+private const val PREF_GIT_PULL_REBASE = "gitPullRebase"
 
 private const val DEFAULT_COMMITS_LIMIT = 1000
 private const val DEFAULT_COMMITS_LIMIT_ENABLED = true
@@ -49,6 +50,9 @@ class AppSettings @Inject constructor() {
 
     private val _ffMergeFlow = MutableStateFlow(ffMerge)
     val ffMergeFlow: StateFlow<Boolean> = _ffMergeFlow
+
+    private val _pullRebaseFlow = MutableStateFlow(pullRebase)
+    val pullRebaseFlow: StateFlow<Boolean> = _pullRebaseFlow
 
     private val _commitsLimitFlow = MutableSharedFlow<Int>()
     val commitsLimitFlow: SharedFlow<Int> = _commitsLimitFlow
@@ -122,6 +126,18 @@ class AppSettings @Inject constructor() {
             _ffMergeFlow.value = value
         }
 
+    /**
+     * Property that decides if the merge should fast-forward when possible
+     */
+    var pullRebase: Boolean
+        get() {
+            return preferences.getBoolean(PREF_GIT_PULL_REBASE, false)
+        }
+        set(value) {
+            preferences.putBoolean(PREF_GIT_PULL_REBASE, value)
+            _pullRebaseFlow.value = value
+        }
+
     val commitsLimit: Int
         get() {
             return preferences.getInt(PREF_COMMITS_LIMIT, DEFAULT_COMMITS_LIMIT)
@@ -164,17 +180,13 @@ class AppSettings @Inject constructor() {
         }
 
     fun saveCustomTheme(filePath: String) {
-        try {
-            val file = File(filePath)
-            val content = file.readText()
+        val file = File(filePath)
+        val content = file.readText()
 
-            Json.decodeFromString<ColorsScheme>(content) // Load to see if it's valid (it will crash if not)
+        Json.decodeFromString<ColorsScheme>(content) // Load to see if it's valid (it will crash if not)
 
-            preferences.put(PREF_CUSTOM_THEME, content)
-            loadCustomTheme()
-        } catch (ex: Exception) {
-            ex.printStackTrace()
-        }
+        preferences.put(PREF_CUSTOM_THEME, content)
+        loadCustomTheme()
     }
 
     fun loadCustomTheme() {

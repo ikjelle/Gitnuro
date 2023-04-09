@@ -10,6 +10,7 @@ import org.eclipse.jgit.transport.CredentialsProvider
 import org.eclipse.jgit.transport.URIish
 import java.io.*
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.cancellation.CancellationException
 
 private const val TIMEOUT_MIN = 1L
 
@@ -49,6 +50,8 @@ class HttpCredentialsProvider @AssistedInject constructor(
                 passwordItem.value = credentials.password.toCharArray()
 
                 return true
+            } else if(credentials is CredentialsState.CredentialsDenied) {
+                throw CancellationException("Credentials denied")
             }
 
             return false
@@ -151,7 +154,9 @@ class HttpCredentialsProvider @AssistedInject constructor(
 
         bufferedReader.use {
             var line: String
-            while (bufferedReader.readLine().also { line = checkNotNull(it) { "Cancelled authentication" } } != null && !(usernameSet && passwordSet)) {
+            while (bufferedReader.readLine().also {
+                    line = checkNotNull(it) { "Cancelled authentication" }
+                } != null && !(usernameSet && passwordSet)) {
                 if (line.startsWith("username=")) {
                     val split = line.split("=")
                     val userName = split.getOrNull(1) ?: return ExternalCredentialsRequestResult.CREDENTIALS_NOT_STORED

@@ -11,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import com.jetpackduba.gitnuro.AppIcons
 import com.jetpackduba.gitnuro.extensions.handOnHover
 import com.jetpackduba.gitnuro.extensions.isLocal
 import com.jetpackduba.gitnuro.extensions.simpleName
@@ -21,6 +22,7 @@ import com.jetpackduba.gitnuro.ui.dialogs.EditRemotesDialog
 import com.jetpackduba.gitnuro.viewmodels.sidepanel.*
 import org.eclipse.jgit.lib.Ref
 import org.eclipse.jgit.revwalk.RevCommit
+import org.eclipse.jgit.submodule.SubmoduleStatus
 
 @Composable
 fun SidePanel(
@@ -29,6 +31,7 @@ fun SidePanel(
     remotesViewModel: RemotesViewModel = sidePanelViewModel.remotesViewModel,
     tagsViewModel: TagsViewModel = sidePanelViewModel.tagsViewModel,
     stashesViewModel: StashesViewModel = sidePanelViewModel.stashesViewModel,
+    submodulesViewModel: SubmodulesViewModel = sidePanelViewModel.submodulesViewModel,
 ) {
     var filter by remember(sidePanelViewModel) { mutableStateOf(sidePanelViewModel.filter.value) }
 
@@ -36,6 +39,7 @@ fun SidePanel(
     val remotesState by remotesViewModel.remoteState.collectAsState()
     val tagsState by tagsViewModel.tagsState.collectAsState()
     val stashesState by stashesViewModel.stashesState.collectAsState()
+    val submodulesState by submodulesViewModel.submodules.collectAsState()
 
     var showEditRemotesDialog by remember { mutableStateOf(false) }
 
@@ -50,9 +54,10 @@ fun SidePanel(
                 .padding(start = 8.dp)
         )
 
-        ScrollableLazyColumn(modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 4.dp)
+        ScrollableLazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 4.dp)
         ) {
             localBranches(
                 branchesState = branchesState,
@@ -73,6 +78,11 @@ fun SidePanel(
             stashes(
                 stashesState = stashesState,
                 stashesViewModel = stashesViewModel,
+            )
+
+            submodules(
+                submodulesState = submodulesState,
+                submodulesViewModel = submodulesViewModel
             )
         }
     }
@@ -101,7 +111,7 @@ fun FilterTextField(value: String, onValueChange: (String) -> Unit, modifier: Mo
         maxLines = 1,
         leadingIcon = {
             Icon(
-                painterResource("search.svg"),
+                painterResource(AppIcons.SEARCH),
                 contentDescription = null,
                 modifier = Modifier.size(16.dp),
                 tint = if (value.isEmpty()) MaterialTheme.colors.onBackgroundSecondary else MaterialTheme.colors.onBackground
@@ -124,7 +134,7 @@ fun LazyListScope.localBranches(
         ) {
             SideMenuHeader(
                 text = "Local branches",
-                icon = painterResource("branch.svg"),
+                icon = painterResource(AppIcons.BRANCH),
                 itemsCount = branches.count(),
                 hoverIcon = null,
                 isExpanded = isExpanded,
@@ -166,7 +176,7 @@ fun LazyListScope.remotes(
         ) {
             SideMenuHeader(
                 text = "Remotes",
-                icon = painterResource("cloud.svg"),
+                icon = painterResource(AppIcons.CLOUD),
                 itemsCount = remotes.count(),
                 hoverIcon = {
                     IconButton(
@@ -177,7 +187,7 @@ fun LazyListScope.remotes(
                             .handOnHover(),
                     ) {
                         Icon(
-                            painter = painterResource("settings.svg"),
+                            painter = painterResource(AppIcons.SETTINGS),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxSize(),
@@ -227,7 +237,7 @@ fun LazyListScope.tags(
         ) {
             SideMenuHeader(
                 text = "Tags",
-                icon = painterResource("tag.svg"),
+                icon = painterResource(AppIcons.TAG),
                 itemsCount = tags.count(),
                 hoverIcon = null,
                 isExpanded = isExpanded,
@@ -263,7 +273,7 @@ fun LazyListScope.stashes(
         ) {
             SideMenuHeader(
                 text = "Stashes",
-                icon = painterResource("stash.svg"),
+                icon = painterResource(AppIcons.STASH),
                 itemsCount = stashes.count(),
                 hoverIcon = null,
                 isExpanded = isExpanded,
@@ -280,6 +290,42 @@ fun LazyListScope.stashes(
                 onApply = { stashesViewModel.applyStash(stash) },
                 onPop = { stashesViewModel.popStash(stash) },
                 onDelete = { stashesViewModel.deleteStash(stash) },
+            )
+        }
+    }
+}
+
+fun LazyListScope.submodules(
+    submodulesState: SubmodulesState,
+    submodulesViewModel: SubmodulesViewModel,
+) {
+    val isExpanded = submodulesState.isExpanded
+    val submodules = submodulesState.submodules
+
+    item {
+        ContextMenu(
+            items = { emptyList() }
+        ) {
+            SideMenuHeader(
+                text = "Submodules",
+                icon = painterResource(AppIcons.TOPIC),
+                itemsCount = submodules.count(),
+                hoverIcon = null,
+                isExpanded = isExpanded,
+                onExpand = { submodulesViewModel.onExpand() }
+            )
+        }
+    }
+
+    if (isExpanded) {
+        items(submodules, key = { it.first }) { submodule ->
+            Submodule(
+                submodule = submodule,
+                onInitializeSubmodule = { submodulesViewModel.initializeSubmodule(submodule.first) },
+                onDeinitializeSubmodule = { submodulesViewModel.onDeinitializeSubmodule(submodule.first) },
+                onSyncSubmodule = { submodulesViewModel.onSyncSubmodule(submodule.first) },
+                onUpdateSubmodule = { submodulesViewModel.onUpdateSubmodule(submodule.first) },
+                onOpenSubmoduleInTab = { submodulesViewModel.onOpenSubmoduleInTab(submodule.first) },
             )
         }
     }
@@ -317,7 +363,7 @@ private fun Branch(
     ) {
         SideMenuSubentry(
             text = branch.simpleName,
-            iconResourcePath = "branch.svg",
+            iconResourcePath = AppIcons.BRANCH,
             onClick = onBranchClicked,
             onDoubleClick = onBranchDoubleClicked,
         ) {
@@ -341,7 +387,7 @@ private fun Remote(
 ) {
     SideMenuSubentry(
         text = remote.remoteInfo.remoteConfig.name,
-        iconResourcePath = "cloud.svg",
+        iconResourcePath = AppIcons.CLOUD,
         onClick = onRemoteClicked
     )
 }
@@ -363,7 +409,7 @@ private fun RemoteBranches(
         SideMenuSubentry(
             text = remoteBranch.simpleName,
             extraPadding = 24.dp,
-            iconResourcePath = "branch.svg",
+            iconResourcePath = AppIcons.BRANCH,
             onClick = onBranchClicked
         )
     }
@@ -386,7 +432,7 @@ private fun Tag(
     ) {
         SideMenuSubentry(
             text = tag.simpleName,
-            iconResourcePath = "tag.svg",
+            iconResourcePath = AppIcons.TAG,
             onClick = onTagClicked,
         )
     }
@@ -412,8 +458,46 @@ private fun Stash(
     ) {
         SideMenuSubentry(
             text = stash.shortMessage,
-            iconResourcePath = "stash.svg",
+            iconResourcePath = AppIcons.STASH,
             onClick = onClick,
         )
+    }
+}
+
+@Composable
+private fun Submodule(
+    submodule: Pair<String, SubmoduleStatus>,
+    onInitializeSubmodule: () -> Unit,
+    onDeinitializeSubmodule: () -> Unit,
+    onSyncSubmodule: () -> Unit,
+    onUpdateSubmodule: () -> Unit,
+    onOpenSubmoduleInTab: () -> Unit,
+) {
+    ContextMenu(
+        items = {
+            submoduleContextMenuItems(
+                submodule.second,
+                onInitializeSubmodule = onInitializeSubmodule,
+                onDeinitializeSubmodule = onDeinitializeSubmodule,
+                onSyncSubmodule = onSyncSubmodule,
+                onUpdateSubmodule = onUpdateSubmodule,
+                onOpenSubmoduleInTab = onOpenSubmoduleInTab,
+            )
+        }
+    ) {
+        SideMenuSubentry(
+            text = submodule.first,
+            iconResourcePath = AppIcons.TOPIC,
+        ) {
+            val stateName = submodule.second.type.toString()
+            Tooltip(stateName) {
+                Text(
+                    text = stateName.first().toString(),
+                    color = MaterialTheme.colors.onBackgroundSecondary,
+                    style = MaterialTheme.typography.body2,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+        }
     }
 }

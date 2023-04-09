@@ -1,14 +1,8 @@
 package com.jetpackduba.gitnuro.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.Card
 import androidx.compose.material.LinearProgressIndicator
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
@@ -16,19 +10,17 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.jetpackduba.gitnuro.LoadingRepository
-import com.jetpackduba.gitnuro.LocalTabScope
 import com.jetpackduba.gitnuro.credentials.CredentialsAccepted
 import com.jetpackduba.gitnuro.credentials.CredentialsRequested
 import com.jetpackduba.gitnuro.credentials.CredentialsState
+import com.jetpackduba.gitnuro.git.ProcessingState
+import com.jetpackduba.gitnuro.ui.components.PrimaryButton
 import com.jetpackduba.gitnuro.ui.dialogs.*
 import com.jetpackduba.gitnuro.ui.dialogs.settings.SettingsDialog
 import com.jetpackduba.gitnuro.viewmodels.RepositorySelectionStatus
 import com.jetpackduba.gitnuro.viewmodels.TabViewModel
-import kotlinx.coroutines.delay
 
 @Composable
 fun AppTab(
@@ -38,19 +30,10 @@ fun AppTab(
     val lastError by errorManager.error.collectAsState(null)
     val showError by tabViewModel.showError.collectAsState()
 
-    if (lastError != null) {
-        LaunchedEffect(lastError) {
-            tabViewModel.showError.value = true
-            delay(5000)
-            tabViewModel.showError.value = false
-        }
-    }
-
     val repositorySelectionStatus = tabViewModel.repositorySelectionStatus.collectAsState()
     val repositorySelectionStatusValue = repositorySelectionStatus.value
-    val isProcessing by tabViewModel.processing.collectAsState()
+    val processingState = tabViewModel.processing.collectAsState().value
 
-    LocalTabScope.current.appStateManager
     Box {
         Column(
             modifier = Modifier
@@ -107,8 +90,7 @@ fun AppTab(
             }
         }
 
-
-        if (isProcessing) {
+        if (processingState is ProcessingState.Processing) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -116,63 +98,50 @@ fun AppTab(
                     .onPreviewKeyEvent { true }, // Disable all keyboard events
                 contentAlignment = Alignment.Center,
             ) {
-                Column {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    if (processingState.title.isNotEmpty()) {
+                        Text(
+                            processingState.title,
+                            style = MaterialTheme.typography.h3,
+                            color = MaterialTheme.colors.onBackground,
+                            modifier = Modifier.padding(bottom = 8.dp),
+                        )
+                    }
+
+                    if (processingState.subtitle.isNotEmpty()) {
+                        Text(
+                            processingState.subtitle,
+                            style = MaterialTheme.typography.body1,
+                            color = MaterialTheme.colors.onBackground,
+                            modifier = Modifier.padding(bottom = 32.dp),
+                        )
+                    }
 
                     LinearProgressIndicator(
-                        modifier = Modifier.width(340.dp),
+                        modifier = Modifier.width(280.dp)
+                            .padding(bottom = 32.dp),
                         color = MaterialTheme.colors.secondary,
                     )
+
+                    if (processingState.isCancellable) {
+                        PrimaryButton(
+                            text = "Cancel",
+                            onClick = { tabViewModel.cancelOngoingTask() }
+                        )
+                    }
                 }
             }
         }
 
 
         val safeLastError = lastError
-        if (safeLastError != null) {
-            AnimatedVisibility(
-                visible = showError,
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 32.dp, bottom = 32.dp)
-            ) {
-                val interactionSource = remember { MutableInteractionSource() }
-                // TODO: Rework popup to appear on top of every other UI component, even dialogs
-                Card(
-                    modifier = Modifier
-                        .defaultMinSize(minWidth = 200.dp, minHeight = 100.dp)
-                        .clickable(
-                            enabled = true,
-                            onClick = {},
-                            interactionSource = interactionSource,
-                            indication = null
-                        ),
-                    backgroundColor = MaterialTheme.colors.error,
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .padding(horizontal = 32.dp)
-                    ) {
-                        Text(
-                            text = "Error",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier
-                                .padding(top = 16.dp),
-                            color = MaterialTheme.colors.onError,
-                        ) // TODO Add more  descriptive title
-
-                        Text(
-                            text = lastError?.message ?: "",
-                            color = MaterialTheme.colors.onError,
-                            modifier = Modifier
-                                .padding(top = 8.dp, bottom = 16.dp)
-                                .widthIn(max = 600.dp)
-                        )
-                    }
-                }
-            }
+        if (safeLastError != null && showError) {
+            ErrorDialog(
+                error = safeLastError,
+                onAccept = { tabViewModel.showError.value = false }
+            )
         }
     }
 }
@@ -192,6 +161,7 @@ fun CredentialsDialog(gitManager: TabViewModel) {
                 }
             )
         }
+
         CredentialsRequested.SshCredentialsRequested -> {
             SshPasswordDialog(
                 onReject = {
@@ -202,6 +172,7 @@ fun CredentialsDialog(gitManager: TabViewModel) {
                 }
             )
         }
+
         is CredentialsRequested.GpgCredentialsRequested -> {
             GpgPasswordDialog(
                 gpgCredentialsRequested = credentialsStateValue,
@@ -214,6 +185,7 @@ fun CredentialsDialog(gitManager: TabViewModel) {
             )
         }
 
-        is CredentialsAccepted, CredentialsState.None, CredentialsState.CredentialsDenied -> { /* Nothing to do */ }
+        is CredentialsAccepted, CredentialsState.None, CredentialsState.CredentialsDenied -> { /* Nothing to do */
+        }
     }
 }

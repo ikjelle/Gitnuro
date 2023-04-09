@@ -22,7 +22,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.res.loadImageBitmap
@@ -31,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jetpackduba.gitnuro.AppIcons
 import com.jetpackduba.gitnuro.extensions.*
 import com.jetpackduba.gitnuro.git.DiffEntryType
 import com.jetpackduba.gitnuro.git.EntryContent
@@ -71,22 +74,18 @@ fun Diff(
     val viewDiffResult = diffResultState.value ?: return
     val focusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
     Column(
         modifier = Modifier
             .background(MaterialTheme.colors.background)
             .fillMaxSize()
-            .focusRequester(focusRequester)
             .focusable()
+            .focusRequester(focusRequester)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
             ) {}
             .onPreviewKeyEvent { keyEvent ->
-                if (keyEvent.matchesBinding(KeybindingOption.EXIT)) {
+                if (keyEvent.matchesBinding(KeybindingOption.EXIT) && keyEvent.type == KeyEventType.KeyDown ) {
                     onCloseDiffView()
                     true
                 } else
@@ -188,7 +187,9 @@ fun Diff(
             ViewDiffResult.None -> throw NotImplementedError("None should be a possible state in the diff")
         }
 
-
+        LaunchedEffect(Unit) {
+            focusRequester.requestFocus()
+        }
     }
 }
 
@@ -324,7 +325,7 @@ private fun AnimatedImage(imagePath: String) {
 @Composable
 fun BinaryDiff() {
     Image(
-        painter = painterResource("binary.svg"),
+        painter = painterResource(AppIcons.BINARY),
         contentDescription = null,
         modifier = Modifier.width(400.dp),
         colorFilter = ColorFilter.tint(MaterialTheme.colors.primary)
@@ -854,7 +855,7 @@ private fun DiffHeader(
                     .handOnHover()
             ) {
                 Image(
-                    painter = painterResource("close.svg"),
+                    painter = painterResource(AppIcons.CLOSE),
                     contentDescription = "Close diff",
                     colorFilter = ColorFilter.tint(MaterialTheme.colors.onBackground),
                 )
@@ -960,7 +961,7 @@ private fun PathOnlyDiffHeader(
                 .handOnHover()
         ) {
             Image(
-                painter = painterResource("close.svg"),
+                painter = painterResource(AppIcons.CLOSE),
                 contentDescription = "Close diff",
                 colorFilter = ColorFilter.tint(MaterialTheme.colors.onBackground),
             )
@@ -1058,9 +1059,9 @@ fun DiffLineText(line: Line, diffEntryType: DiffEntryType, onActionTriggered: ()
 
             val iconName = remember(diffEntryType) {
                 if (diffEntryType is DiffEntryType.StagedDiff) {
-                    "remove.svg"
+                    AppIcons.REMOVE
                 } else {
-                    "add.svg"
+                    AppIcons.ADD
                 }
             }
 

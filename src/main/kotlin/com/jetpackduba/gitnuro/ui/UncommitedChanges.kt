@@ -29,6 +29,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.jetpackduba.gitnuro.extensions.*
 import com.jetpackduba.gitnuro.git.DiffEntryType
@@ -40,7 +41,12 @@ import com.jetpackduba.gitnuro.theme.*
 import com.jetpackduba.gitnuro.ui.components.ScrollableLazyColumn
 import com.jetpackduba.gitnuro.ui.components.SecondaryButton
 import com.jetpackduba.gitnuro.ui.components.gitnuroViewModel
-import com.jetpackduba.gitnuro.ui.context_menu.*
+import com.jetpackduba.gitnuro.ui.context_menu.ContextMenu
+import com.jetpackduba.gitnuro.ui.context_menu.ContextMenuElement
+import com.jetpackduba.gitnuro.ui.context_menu.EntryType
+import com.jetpackduba.gitnuro.ui.context_menu.statusEntriesContextMenuItems
+import com.jetpackduba.gitnuro.ui.dialogs.CommitAuthorDialog
+import com.jetpackduba.gitnuro.viewmodels.CommitterDataRequestState
 import com.jetpackduba.gitnuro.viewmodels.StageStatus
 import com.jetpackduba.gitnuro.viewmodels.StatusViewModel
 import org.eclipse.jgit.lib.RepositoryState
@@ -61,6 +67,8 @@ fun UncommitedChanges(
     val unstagedListState by statusViewModel.unstagedLazyListState.collectAsState()
     val isAmend by statusViewModel.isAmend.collectAsState()
     val stagingLayoutReversedEnabledFlow = statusViewModel.stagingLayoutReversedEnabledFlow.collectAsState()
+    val committerDataRequestState = statusViewModel.committerDataRequestState.collectAsState()
+    val committerDataRequestStateValue = committerDataRequestState.value
 
     val stageStatus = stageStatusState.value
     val staged: List<StatusEntry>
@@ -85,7 +93,7 @@ fun UncommitedChanges(
     }
 
     val canCommit = commitMessage.isNotEmpty() && staged.isNotEmpty()
-    val canAmend = commitMessage.isNotEmpty()  && statusViewModel.hasPreviousCommits
+    val canAmend = commitMessage.isNotEmpty() && statusViewModel.hasPreviousCommits
 
     LaunchedEffect(statusViewModel) {
         statusViewModel.commitMessageChangesFlow.collect { newCommitMessage ->
@@ -93,10 +101,20 @@ fun UncommitedChanges(
         }
     }
 
+    if (committerDataRequestStateValue is CommitterDataRequestState.WaitingInput) {
+        CommitAuthorDialog(
+            committerDataRequestStateValue.authorInfo,
+            onClose = { statusViewModel.onRejectCommitterData() },
+            onAccept = { newAuthorInfo, persist ->
+                statusViewModel.onAcceptCommitterData(newAuthorInfo, persist)
+            },
+        )
+    }
+
     Column(
         modifier = Modifier
             .padding(end = 8.dp, bottom = 8.dp)
-            .fillMaxWidth()
+            .fillMaxWidth(),
     ) {
         AnimatedVisibility(
             visible = isLoading,
@@ -178,13 +196,16 @@ fun UncommitedChanges(
                 allActionTitle = "Stage all",
             )
         }
-
-        if (!isStagingLayoutReversed) {
-            stagedEntriesList()
-            unstagedEntriesList()
-        } else {
-            unstagedEntriesList()
-            stagedEntriesList()
+        Column(
+            modifier = Modifier.weight(1f)
+        ) {
+            if (!isStagingLayoutReversed) {
+                stagedEntriesList()
+                unstagedEntriesList()
+            } else {
+                unstagedEntriesList()
+                stagedEntriesList()
+            }
         }
 
         Column(
@@ -706,6 +727,42 @@ private fun FileEntry(
                 modifier = Modifier
                     .padding(horizontal = 16.dp),
             )
+        }
+    }
+}
+
+
+@Stable
+val BottomReversed = object : Arrangement.Vertical {
+    override fun Density.arrange(
+        totalSize: Int,
+        sizes: IntArray,
+        outPositions: IntArray
+    ) = placeRightOrBottom(totalSize, sizes, outPositions, reverseInput = true)
+
+    override fun toString() = "Arrangement#BottomReversed"
+}
+
+internal fun placeRightOrBottom(
+    totalSize: Int,
+    size: IntArray,
+    outPosition: IntArray,
+    reverseInput: Boolean
+) {
+    val consumedSize = size.fold(0) { a, b -> a + b }
+    var current = totalSize - consumedSize
+    size.forEachIndexed(reverseInput) { index, it ->
+        outPosition[index] = current
+        current += it
+    }
+}
+
+private inline fun IntArray.forEachIndexed(reversed: Boolean, action: (Int, Int) -> Unit) {
+    if (!reversed) {
+        forEachIndexed(action)
+    } else {
+        for (i in (size - 1) downTo 0) {
+            action(i, get(i))
         }
     }
 }

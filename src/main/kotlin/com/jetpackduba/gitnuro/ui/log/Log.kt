@@ -37,9 +37,11 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.jetpackduba.gitnuro.AppIcons
 import com.jetpackduba.gitnuro.extensions.*
 import com.jetpackduba.gitnuro.git.graph.GraphCommitList
 import com.jetpackduba.gitnuro.git.graph.GraphNode
+import com.jetpackduba.gitnuro.git.graph.UncommitedChangesGraphNode
 import com.jetpackduba.gitnuro.git.workspace.StatusSummary
 import com.jetpackduba.gitnuro.keybindings.KeybindingOption
 import com.jetpackduba.gitnuro.keybindings.matchesBinding
@@ -239,7 +241,7 @@ fun Log(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                painterResource("align_top.svg"),
+                                painterResource(AppIcons.ALIGN_TOP),
                                 contentDescription = null,
                                 tint = MaterialTheme.colors.onPrimary,
                                 modifier = Modifier.size(20.dp),
@@ -295,7 +297,7 @@ fun SearchFilter(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(64.dp),
+            .height(56.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TextField(
@@ -312,14 +314,14 @@ fun SearchFilter(
                 .focusRequester(textFieldFocusRequester)
                 .onPreviewKeyEvent { keyEvent ->
                     when {
-                        keyEvent.matchesBinding(KeybindingOption.SIMPLE_ACCEPT) && keyEvent.type == KeyEventType.KeyUp -> {
+                        keyEvent.matchesBinding(KeybindingOption.SIMPLE_ACCEPT) && keyEvent.type == KeyEventType.KeyDown -> {
                             scope.launch {
                                 logViewModel.selectNextFilterCommit()
                             }
                             true
                         }
 
-                        keyEvent.matchesBinding(KeybindingOption.EXIT) && keyEvent.type == KeyEventType.KeyUp -> {
+                        keyEvent.matchesBinding(KeybindingOption.EXIT) && keyEvent.type == KeyEventType.KeyDown -> {
                             logViewModel.closeSearch()
                             true
                         }
@@ -772,6 +774,8 @@ fun CommitLine(
     onRevCommitSelected: () -> Unit,
     onRebaseInteractive: () -> Unit,
 ) {
+    val isLastCommitOfCurrentBranch =  currentBranch?.objectId?.name == graphNode.id.name
+
     ContextMenu(
         items = {
             logContextMenu(
@@ -782,6 +786,7 @@ fun CommitLine(
                 onCherryPickCommit = { logViewModel.cherrypickCommit(graphNode) },
                 onRebaseInteractive = onRebaseInteractive,
                 onResetBranch = { resetBranch() },
+                isLastCommit = isLastCommitOfCurrentBranch
             )
         },
     ) {
@@ -1110,7 +1115,7 @@ fun BranchChip(
     if (isCurrentBranch) {
         endingContent = {
             Icon(
-                painter = painterResource("location.svg"),
+                painter = painterResource(AppIcons.LOCATION),
                 contentDescription = null,
                 modifier = Modifier.padding(end = 6.dp),
                 tint = MaterialTheme.colors.primaryVariant,
@@ -1122,7 +1127,7 @@ fun BranchChip(
         modifier = modifier,
         color = color,
         ref = ref,
-        icon = "branch.svg",
+        icon = AppIcons.BRANCH,
         onCheckoutRef = onCheckoutBranch,
         contextMenuItemsList = contextMenuItemsList,
         endingContent = endingContent,
@@ -1148,7 +1153,7 @@ fun TagChip(
     RefChip(
         modifier,
         ref,
-        "tag.svg",
+        AppIcons.TAG,
         onCheckoutRef = onCheckoutTag,
         contextMenuItemsList = contextMenuItemsList,
         color = color,

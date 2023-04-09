@@ -6,6 +6,8 @@ import com.jetpackduba.gitnuro.extensions.isMerging
 import com.jetpackduba.gitnuro.extensions.isReverting
 import com.jetpackduba.gitnuro.git.RefreshType
 import com.jetpackduba.gitnuro.git.TabState
+import com.jetpackduba.gitnuro.git.author.LoadAuthorUseCase
+import com.jetpackduba.gitnuro.git.author.SaveAuthorUseCase
 import com.jetpackduba.gitnuro.git.log.CheckHasPreviousCommitsUseCase
 import com.jetpackduba.gitnuro.git.log.GetLastCommitMessageUseCase
 import com.jetpackduba.gitnuro.git.rebase.AbortRebaseUseCase
@@ -14,6 +16,7 @@ import com.jetpackduba.gitnuro.git.rebase.SkipRebaseUseCase
 import com.jetpackduba.gitnuro.git.repository.ResetRepositoryStateUseCase
 import com.jetpackduba.gitnuro.git.workspace.*
 import com.jetpackduba.gitnuro.preferences.AppSettings
+import com.jetpackduba.gitnuro.models.AuthorInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -23,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.lib.PersonIdent
 import org.eclipse.jgit.lib.RepositoryState
 import java.io.File
 import javax.inject.Inject
@@ -48,6 +52,8 @@ class StatusViewModel @Inject constructor(
     private val getUnstagedUseCase: GetUnstagedUseCase,
     private val checkHasUncommitedChangedUseCase: CheckHasUncommitedChangedUseCase,
     private val doCommitUseCase: DoCommitUseCase,
+    private val loadAuthorUseCase: LoadAuthorUseCase,
+    private val saveAuthorUseCase: SaveAuthorUseCase,
     private val tabScope: CoroutineScope,
 ) {
     private val _stageStatus = MutableStateFlow<StageStatus>(StageStatus.Loaded(listOf(), listOf(), false))
@@ -63,6 +69,8 @@ class StatusViewModel @Inject constructor(
     val unstagedLazyListState = MutableStateFlow(LazyListState(0, 0))
 
     val stagingLayoutReversedEnabledFlow = appSettings.stagingLayoutReversedEnabledFlow
+    private val _committerDataRequestState = MutableStateFlow<CommitterDataRequestState>(CommitterDataRequestState.None)
+    val committerDataRequestState: StateFlow<CommitterDataRequestState> = _committerDataRequestState
 
     /**
      * Notify the UI that the commit message has been changed by the view model
@@ -198,6 +206,7 @@ class StatusViewModel @Inject constructor(
     private suspend fun loadHasUncommitedChanges(git: Git) = withContext(Dispatchers.IO) {
         lastUncommitedChangesState = checkHasUncommitedChangedUseCase(git)
     }
+
     fun amend(isAmend: Boolean) {
         _isAmend.value = isAmend
 
@@ -216,7 +225,35 @@ class StatusViewModel @Inject constructor(
         } else
             message
 
-        doCommitUseCase(git, commitMessage, amend)
+        val author = loadAuthorUseCase(git)
+
+        val personIdent = if (
+            author.name.isNullOrEmpty() && author.globalName.isNullOrEmpty() ||
+            author.email.isNullOrEmpty() && author.globalEmail.isNullOrEmpty()
+        ) {
+            _committerDataRequestState.value = CommitterDataRequestState.WaitingInput(author)
+
+            var committerData = _committerDataRequestState.value
+
+            while (committerData is CommitterDataRequestState.WaitingInput) {
+                committerData = _committerDataRequestState.value
+            }
+
+            if (committerData is CommitterDataRequestState.Accepted) {
+                val authorInfo = committerData.authorInfo
+
+                if (committerData.persist) {
+                    saveAuthorUseCase(git, authorInfo)
+                }
+
+                PersonIdent(authorInfo.globalName, authorInfo.globalEmail)
+            } else {
+                null
+            }
+        } else
+            null
+
+        doCommitUseCase(git, commitMessage, amend, personIdent)
         updateCommitMessage("")
         _isAmend.value = false
     }
@@ -292,6 +329,13 @@ class StatusViewModel @Inject constructor(
     fun getDirectory(): String {
         return tabState.git.repository.directory.absolutePath.dropLast(4) // Drop .git ends in /
     }
+        fun onRejectCommitterData() {
+        this._committerDataRequestState.value = CommitterDataRequestState.Reject
+    }
+
+    fun onAcceptCommitterData(newAuthorInfo: AuthorInfo, persist: Boolean) {
+        this._committerDataRequestState.value = CommitterDataRequestState.Accepted(newAuthorInfo, persist)
+    }
 }
 
 sealed class StageStatus {
@@ -308,4 +352,11 @@ data class CommitMessage(val message: String, val messageType: MessageType)
 enum class MessageType {
     NORMAL,
     MERGE;
+}
+
+sealed interface CommitterDataRequestState {
+    object None : CommitterDataRequestState
+    data class WaitingInput(val authorInfo: AuthorInfo) : CommitterDataRequestState
+    data class Accepted(val authorInfo: AuthorInfo, val persist: Boolean) : CommitterDataRequestState
+    object Reject : CommitterDataRequestState
 }

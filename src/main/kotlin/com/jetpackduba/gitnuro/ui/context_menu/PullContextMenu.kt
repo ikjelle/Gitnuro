@@ -1,17 +1,22 @@
 package com.jetpackduba.gitnuro.ui.context_menu
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-
 fun pullContextMenuItems(
-    onPullRebase: () -> Unit,
+    onPullWith: () -> Unit,
     onFetchAll: () -> Unit,
-): List<DropDownContentData> {
+    isPullWithRebaseDefault: Boolean,
+): List<ContextMenuElement> {
+    val pullWithText = if (isPullWithRebaseDefault) {
+        "Pull with merge"
+    } else {
+        "Pull with rebase"
+    }
+
     return mutableListOf(
-        DropDownContentData(
-            label = "Pull with rebase",
-            onClick = onPullRebase,
+        ContextMenuElement.ContextTextEntry(
+            label = pullWithText,
+            onClick = onPullWith,
         ),
-        DropDownContentData(
+        ContextMenuElement.ContextTextEntry(
             label = "Fetch all",
             onClick = onFetchAll,
         ),
