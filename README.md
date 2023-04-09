@@ -16,6 +16,11 @@ The main goal of Gitnuro is to provide a multiplatform open source Git client wi
 ## Download/Install
 
 Linux:
+To get a jar of this code use: `./gradlew fatJarLinux`. Then move the file from /build/libs/Gitnuro-linux-{VERSION}.jar towards the location you want and then create an .desktop file to launch it. You may want to add the icon to that location as well. You can run the jar with `java -jar Gitnuro-linux.jar`
+
+To get the original:
+
+Linux:
 - Available as Flatpak [here](https://beta.flathub.org/apps/details/com.jetpackduba.Gitnuro) or by running `flatpak install --user com.jetpackduba.Gitnuro` if you have Flatpak & Flathub already setup.
 - JAR file can be executed as a portable version (Requires JRE 17).
 
