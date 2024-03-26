@@ -1,7 +1,7 @@
 package com.jetpackduba.gitnuro.git
 
-import com.jetpackduba.gitnuro.TempFilesManager
 import com.jetpackduba.gitnuro.extensions.fileName
+import com.jetpackduba.gitnuro.managers.TempFilesManager
 import org.eclipse.jgit.diff.ContentSource
 import org.eclipse.jgit.diff.DiffEntry
 import org.eclipse.jgit.diff.RawText
@@ -34,12 +34,6 @@ val animatedImages = arrayOf(
 class RawFileManager @Inject constructor(
     private val tempFilesManager: TempFilesManager,
 ) {
-    private fun source(iterator: AbstractTreeIterator, reader: ObjectReader): ContentSource {
-        return if (iterator is WorkingTreeIterator)
-            ContentSource.create(iterator)
-        else
-            ContentSource.create(reader)
-    }
 
     fun getRawContent(
         repository: Repository,
@@ -49,6 +43,7 @@ class RawFileManager @Inject constructor(
         newTreeIterator: AbstractTreeIterator?,
     ): EntryContent {
         if (entry.getMode(side) === FileMode.MISSING) return EntryContent.Missing
+        if (entry.getMode(side).objectType == Constants.OBJ_COMMIT) return EntryContent.Submodule
         if (entry.getMode(side).objectType != Constants.OBJ_BLOB) return EntryContent.InvalidObjectBlob
 
         val reader: ObjectReader = repository.newObjectReader()
@@ -74,6 +69,13 @@ class RawFileManager @Inject constructor(
                     EntryContent.Binary
             }
         }
+    }
+
+    private fun source(iterator: AbstractTreeIterator, reader: ObjectReader): ContentSource {
+        return if (iterator is WorkingTreeIterator)
+            ContentSource.create(iterator)
+        else
+            ContentSource.create(reader)
     }
 
     private fun generateImageBinary(
@@ -106,12 +108,13 @@ class RawFileManager @Inject constructor(
     }
 }
 
-sealed class EntryContent {
-    object Missing : EntryContent()
-    object InvalidObjectBlob : EntryContent()
-    data class Text(val rawText: RawText) : EntryContent()
-    sealed class BinaryContent : EntryContent()
-    data class ImageBinary(val imagePath: String, val contentType: String) : BinaryContent()
-    object Binary : BinaryContent()
-    object TooLargeEntry : EntryContent()
+sealed interface EntryContent {
+    data object Missing : EntryContent
+    data object InvalidObjectBlob : EntryContent
+    data class Text(val rawText: RawText) : EntryContent
+    data object Submodule : EntryContent
+    sealed interface BinaryContent : EntryContent
+    data class ImageBinary(val imagePath: String, val contentType: String) : BinaryContent
+    data object Binary : BinaryContent
+    data object TooLargeEntry : EntryContent
 }

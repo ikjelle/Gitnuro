@@ -1,62 +1,64 @@
 package com.jetpackduba.gitnuro.ui.components
 
-import androidx.compose.foundation.HorizontalScrollbar
-import androidx.compose.foundation.background
-import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollbarAdapter
+import androidx.compose.foundation.v2.maxScrollOffset
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.jetpackduba.gitnuro.App
-import com.jetpackduba.gitnuro.AppStateManager
+import com.jetpackduba.gitnuro.AppIcons
 import com.jetpackduba.gitnuro.LocalTabScope
-import com.jetpackduba.gitnuro.credentials.CredentialsStateManager
 import com.jetpackduba.gitnuro.di.AppComponent
 import com.jetpackduba.gitnuro.di.DaggerTabComponent
 import com.jetpackduba.gitnuro.di.TabComponent
 import com.jetpackduba.gitnuro.extensions.handMouseClickable
 import com.jetpackduba.gitnuro.extensions.handOnHover
-import com.jetpackduba.gitnuro.preferences.AppSettings
-import com.jetpackduba.gitnuro.viewmodels.SettingsViewModel
+import com.jetpackduba.gitnuro.extensions.onMiddleMouseButtonClick
+import com.jetpackduba.gitnuro.managers.AppStateManager
+import com.jetpackduba.gitnuro.ui.components.tooltip.DelayedTooltip
+import com.jetpackduba.gitnuro.ui.components.tooltip.InstantTooltip
+import com.jetpackduba.gitnuro.ui.drag_sorting.HorizontalDraggableItem
+import com.jetpackduba.gitnuro.ui.drag_sorting.horizontalDragContainer
+import com.jetpackduba.gitnuro.ui.drag_sorting.rememberHorizontalDragDropState
 import com.jetpackduba.gitnuro.viewmodels.TabViewModel
 import com.jetpackduba.gitnuro.viewmodels.TabViewModelsHolder
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlin.io.path.Path
 import kotlin.io.path.name
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RepositoriesTabPanel(
     tabs: List<TabInformation>,
-    selectedTabKey: Int,
-    onTabSelected: (Int) -> Unit,
-    onTabClosed: (Int) -> Unit,
-    newTabContent: (key: Int) -> TabInformation,
+    currentTab: TabInformation?,
+    tabsHeight: Dp,
+    onTabSelected: (TabInformation) -> Unit,
+    onTabClosed: (TabInformation) -> Unit,
+    onMoveTab: (Int, Int) -> Unit,
+    onAddNewTab: () -> Unit,
 ) {
-    var tabsIdentifier by remember { mutableStateOf(tabs.count()) }
     val stateHorizontal = rememberLazyListState()
-
-    LaunchedEffect(selectedTabKey) {
-        val index = tabs.indexOfFirst { it.key == selectedTabKey }
-        // todo sometimes it scrolls to (index - 1) for some weird reason
-        if (index > -1) {
-            stateHorizontal.scrollToItem(index)
-        }
-    }
+    val scrollAdapter = rememberScrollbarAdapter(stateHorizontal)
+    val scope = rememberCoroutineScope()
+    var latestTabCount by remember { mutableStateOf(tabs.count()) }
 
     val canBeScrolled by remember {
         derivedStateOf {
@@ -78,170 +80,174 @@ fun RepositoriesTabPanel(
         }
     }
 
+    Column {
+        if (canBeScrolled) {
+            DelayedTooltip(
+                "\"Shift + Mouse wheel\" to scroll"
+            ) {
+                HorizontalScrollbar(
+                    modifier = Modifier
+                        .fillMaxWidth(),
+                    adapter = scrollAdapter
+                )
+            }
+        }
 
-    Row {
-        Box(
-            modifier = Modifier
-                .weight(1f, false)
-        ) {
+
+        val dragDropState = rememberHorizontalDragDropState(stateHorizontal) { fromIndex, toIndex ->
+            onMoveTab(fromIndex, toIndex)
+        }
+
+        Row {
             LazyRow(
                 modifier = Modifier
-                    .fillMaxHeight(),
+                    .height(tabsHeight)
+                    .weight(1f, false)
+                    .horizontalDragContainer(
+                        dragDropState = dragDropState,
+                        onDraggedItem = {
+                            val tab = tabs.getOrNull(it)
+
+                            if (tab != null) {
+                                onTabSelected(tab)
+                            }
+                        },
+                    ),
                 state = stateHorizontal,
             ) {
-                items(items = tabs, key = { it.key }) { tab ->
-                    Tab(
-                        title = tab.tabName,
-                        isSelected = tab.key == selectedTabKey,
-                        onClick = {
-                            onTabSelected(tab.key)
-                        },
-                        onCloseTab = {
-                            val isTabSelected = selectedTabKey == tab.key
-
-                            if (isTabSelected) {
-                                val nextKey = getTabNextKey(tab, tabs)
-
-                                if (nextKey >= 0) {
-                                    onTabSelected(nextKey)
-                                } else {
-                                    tabsIdentifier++
-
-                                    // Create a new tab if the tabs list is empty after removing the current one
-                                    newTabContent(tabsIdentifier)
-                                    onTabSelected(tabsIdentifier)
+                itemsIndexed(
+                    items = tabs,
+                    key = { _, tab -> tab.tabViewModel }
+                ) { index, tab ->
+                    HorizontalDraggableItem(dragDropState, index) { _ ->
+                        InstantTooltip(tab.path) {
+                            Tab(
+                                modifier = Modifier,
+                                title = tab.tabName,
+                                isSelected = currentTab == tab,
+                                onClick = {
+                                    onTabSelected(tab)
+                                },
+                                onCloseTab = {
+                                    onTabClosed(tab)
                                 }
-                            }
-
-                            onTabClosed(tab.key)
+                            )
                         }
-                    )
-                }
-            }
-
-            if (canBeScrolled) {
-                Tooltip(
-                    "\"Shift + Mouse wheel\" to scroll"
-                ) {
-                    HorizontalScrollbar(
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .width((tabs.count() * 180).dp),
-                        adapter = rememberScrollbarAdapter(stateHorizontal)
-                    )
-                }
-            }
-        }
-
-        IconButton(
-            onClick = {
-                tabsIdentifier++
-
-                newTabContent(tabsIdentifier)
-                onTabSelected(tabsIdentifier)
-            },
-            modifier = Modifier
-                .size(36.dp)
-                .handOnHover()
-                .align(Alignment.CenterVertically),
-        ) {
-            Icon(
-                imageVector = Icons.Default.Add,
-                contentDescription = null,
-                tint = MaterialTheme.colors.primaryVariant,
-            )
-        }
-    }
-}
-
-
-private fun getTabNextKey(tab: TabInformation, tabs: List<TabInformation>): Int {
-    val index = tabs.indexOf(tab)
-    val nextIndex = if (index == 0 && tabs.count() >= 2) {
-        1 // If the first tab is selected, select the next one
-    } else if (index == tabs.count() - 1 && tabs.count() >= 2)
-        index - 1 // If the last tab is selected, select the previous one
-    else if (tabs.count() >= 2)
-        index + 1 // If any in between tab is selected, select the next one
-    else
-        -1 // If there aren't any additional tabs once we remove this one
-
-    return if (nextIndex >= 0)
-        tabs[nextIndex].key
-    else
-        -1
-}
-
-@Composable
-fun Tab(title: MutableState<String>, isSelected: Boolean, onClick: () -> Unit, onCloseTab: () -> Unit) {
-    Box {
-        val backgroundColor = if (isSelected)
-            MaterialTheme.colors.surface
-        else
-            MaterialTheme.colors.background
-
-        val hoverInteraction = remember { MutableInteractionSource() }
-        val isHovered by hoverInteraction.collectIsHoveredAsState()
-
-        Box(
-            modifier = Modifier
-                .width(180.dp)
-                .fillMaxHeight()
-                .hoverable(hoverInteraction)
-                .handMouseClickable { onClick() }
-                .background(backgroundColor),
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.CenterStart),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = title.value,
-                    modifier = Modifier
-                        .padding(start = 16.dp, end = 8.dp)
-                        .weight(1f),
-                    overflow = TextOverflow.Visible,
-                    style = MaterialTheme.typography.body2,
-                    color = MaterialTheme.colors.onBackground,
-                    maxLines = 1,
-                )
-
-                if (isHovered || isSelected) {
-                    IconButton(
-                        onClick = onCloseTab,
-                        modifier = Modifier
-                            .padding(horizontal = 8.dp)
-                            .size(14.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = null,
-                            tint = MaterialTheme.colors.onBackground
-                        )
                     }
                 }
             }
 
-            if (isSelected) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .background(MaterialTheme.colors.primaryVariant)
+            IconButton(
+                onClick = {
+                    onAddNewTab()
+                },
+                modifier = Modifier
+                    .size(36.dp)
+                    .handOnHover()
+                    .align(Alignment.CenterVertically),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = null,
+                    tint = MaterialTheme.colors.primaryVariant,
                 )
             }
+        }
+    }
+
+    LaunchedEffect(tabs.count()) {
+        // Scroll to the end if a new tab has been added & it's empty (so it's not a new submodule tab)
+        if (latestTabCount < tabs.count() && currentTab?.path == null) {
+            scope.launch {
+                delay(50) // add small delay to wait until [scrollAdapter.maxScrollOffset] is recalculated. Seems more like a hack of some kind...
+                scrollAdapter.scrollTo(scrollAdapter.maxScrollOffset)
+            }
+        }
+
+        latestTabCount = tabs.count()
+    }
+}
+
+@Composable
+fun Tab(
+    modifier: Modifier,
+    title: MutableState<String>,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    onCloseTab: () -> Unit,
+) {
+    val backgroundColor = if (isSelected)
+        MaterialTheme.colors.surface
+    else
+        MaterialTheme.colors.background
+
+    val hoverInteraction = remember { MutableInteractionSource() }
+    val isHovered by hoverInteraction.collectIsHoveredAsState()
+
+    Box(
+        modifier = modifier
+            .widthIn(min = 200.dp)
+            .width(IntrinsicSize.Max)
+            .fillMaxHeight()
+            .hoverable(hoverInteraction)
+            .handMouseClickable { onClick() }
+            .onMiddleMouseButtonClick {
+                onCloseTab()
+            }
+            .background(backgroundColor),
+    ) {
+        Row(
+            modifier = Modifier
+                .align(Alignment.CenterStart),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = title.value,
+                modifier = Modifier
+                    .padding(start = 16.dp)
+                    .weight(1f)
+                    .widthIn(max = 720.dp),
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.body2,
+                color = MaterialTheme.colors.onBackground,
+                maxLines = 1,
+                softWrap = false,
+            )
+
+            IconButton(
+                onClick = onCloseTab,
+                enabled = isHovered || isSelected,
+                modifier = Modifier
+                    .alpha(if (isHovered || isSelected) 1f else 0f)
+                    .padding(horizontal = 8.dp)
+                    .size(14.dp)
+            ) {
+                Icon(
+                    painterResource(AppIcons.CLOSE),
+                    contentDescription = null,
+                    tint = MaterialTheme.colors.onBackground
+                )
+            }
+        }
+
+        if (isSelected) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .background(MaterialTheme.colors.primaryVariant)
+            )
         }
     }
 }
 
 class TabInformation(
     val tabName: MutableState<String>,
-    val key: Int,
-    val path: String?,
-    appComponent: AppComponent,
+    val initialPath: String?,
+    val onTabPathChanged: () -> Unit,
+    appComponent: AppComponent?,
 ) {
     private val tabComponent: TabComponent = DaggerTabComponent.builder()
         .appComponent(appComponent)
@@ -256,40 +262,43 @@ class TabInformation(
     @Inject
     lateinit var tabViewModelsHolder: TabViewModelsHolder
 
+    var path = initialPath
+        private set
+
     init {
         tabComponent.inject(this)
 
-        tabViewModel.onRepositoryChanged = { path ->
-            if (path == null) {
-                appStateManager.repositoryTabRemoved(key)
-            } else {
-                tabName.value = Path(path).name
-                appStateManager.repositoryTabChanged(key, path)
-            }
+        if (initialPath != null) {
+            tabName.value = Path(initialPath).name
         }
-        if (path != null)
-            tabViewModel.openRepository(path)
+
+        tabViewModel.onRepositoryChanged = { newPath ->
+            this.path = newPath
+
+            if (newPath == null) {
+                tabName.value = DEFAULT_NAME
+            } else {
+                tabName.value = Path(newPath).name
+                appStateManager.repositoryTabChanged(newPath)
+            }
+
+            onTabPathChanged()
+        }
+
+        // Set the path that should be loaded when the tab is selected for the first time
+        tabViewModel.initialPath = initialPath
+    }
+
+    fun dispose() {
+        tabViewModel.dispose()
+    }
+
+    companion object {
+        const val DEFAULT_NAME = "New tab"
     }
 }
 
-fun emptyTabInformation() = TabInformation(mutableStateOf(""), 0, "", object : AppComponent {
-    override fun inject(main: App) {}
-    override fun appStateManager(): AppStateManager {
-        error("This method should not be invoked -  emptyTabInformation")
-    }
-
-    override fun settingsViewModel(): SettingsViewModel {
-        error("This method should not be invoked -  emptyTabInformation")
-    }
-
-    override fun credentialsStateManager(): CredentialsStateManager {
-        error("This method should not be invoked -  emptyTabInformation")
-    }
-
-    override fun appPreferences(): AppSettings {
-        error("This method should not be invoked -  emptyTabInformation")
-    }
-})
+fun emptyTabInformation() = TabInformation(mutableStateOf(""), "", {}, null)
 
 @Composable
 inline fun <reified T> gitnuroViewModel(): T {
@@ -297,5 +306,14 @@ inline fun <reified T> gitnuroViewModel(): T {
 
     return remember(tab) {
         tab.tabViewModelsHolder.viewModels[T::class] as T
+    }
+}
+
+@Composable
+inline fun <reified T> gitnuroDynamicViewModel(): T {
+    val tab = LocalTabScope.current
+
+    return remember(tab) {
+        tab.tabViewModelsHolder.dynamicViewModel(T::class) as T
     }
 }

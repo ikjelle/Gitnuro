@@ -12,18 +12,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.pointer.PointerIcon
-import androidx.compose.ui.input.pointer.pointerHoverIcon
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.*
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
+import com.jetpackduba.gitnuro.AppConstants
+import com.jetpackduba.gitnuro.LocalTabScope
 import com.jetpackduba.gitnuro.extensions.handMouseClickable
 import com.jetpackduba.gitnuro.git.DiffEntryType
+import com.jetpackduba.gitnuro.git.rebase.RebaseInteractiveState
 import com.jetpackduba.gitnuro.keybindings.KeybindingOption
 import com.jetpackduba.gitnuro.keybindings.matchesBinding
-import com.jetpackduba.gitnuro.ui.components.PrimaryButton
+import com.jetpackduba.gitnuro.ui.components.SecondaryButton
+import com.jetpackduba.gitnuro.ui.components.TripleVerticalSplitPanel
+import com.jetpackduba.gitnuro.ui.components.gitnuroDynamicViewModel
 import com.jetpackduba.gitnuro.ui.dialogs.*
 import com.jetpackduba.gitnuro.ui.diff.Diff
 import com.jetpackduba.gitnuro.ui.log.Log
@@ -32,10 +33,6 @@ import com.jetpackduba.gitnuro.viewmodels.TabViewModel
 import org.eclipse.jgit.lib.RepositoryState
 import org.eclipse.jgit.revwalk.RevCommit
 import org.jetbrains.compose.splitpane.ExperimentalSplitPaneApi
-import org.jetbrains.compose.splitpane.HorizontalSplitPane
-import org.jetbrains.compose.splitpane.SplitterScope
-import org.jetbrains.compose.splitpane.rememberSplitPaneState
-import java.awt.Cursor
 
 @Composable
 fun RepositoryOpenPage(
@@ -53,6 +50,7 @@ fun RepositoryOpenPage(
     var showNewBranchDialog by remember { mutableStateOf(false) }
     var showStashWithMessageDialog by remember { mutableStateOf(false) }
     var showQuickActionsDialog by remember { mutableStateOf(false) }
+    var showSignOffDialog by remember { mutableStateOf(false) }
 
     if (showNewBranchDialog) {
         NewBranchDialog(
@@ -93,8 +91,14 @@ fun RepositoryOpenPage(
                     QuickActionType.OPEN_DIR_IN_FILE_MANAGER -> tabViewModel.openFolderInFileExplorer()
                     QuickActionType.CLONE -> onShowCloneDialog()
                     QuickActionType.REFRESH -> tabViewModel.refreshAll()
+                    QuickActionType.SIGN_OFF -> showSignOffDialog = true
                 }
             },
+        )
+    } else if (showSignOffDialog) {
+        SignOffDialog(
+            viewModel = gitnuroDynamicViewModel(),
+            onClose = { showSignOffDialog = false },
         )
     }
 
@@ -118,38 +122,35 @@ fun RepositoryOpenPage(
                         }
                     }
             ) {
-                val rebaseInteractiveViewModel = tabViewModel.rebaseInteractiveViewModel
+                val currentTabInformation = LocalTabScope.current
+                Column(modifier = Modifier.weight(1f)) {
+                    Menu(
+                        modifier = Modifier
+                            .padding(
+                                vertical = 4.dp
+                            )
+                            .fillMaxWidth(),
+                        onCreateBranch = { showNewBranchDialog = true },
+                        onStashWithMessage = { showStashWithMessageDialog = true },
+                        onOpenAnotherRepository = {
+                            val repo = tabViewModel.openDirectoryPicker()
 
-                if (repositoryState == RepositoryState.REBASING_INTERACTIVE && rebaseInteractiveViewModel != null) {
-                    RebaseInteractive(rebaseInteractiveViewModel)
-                } else if (repositoryState == RepositoryState.REBASING_INTERACTIVE) {
-                    RebaseInteractiveStartedExternally(
-                        onCancelRebaseInteractive = { tabViewModel.cancelRebaseInteractive() }
+                            if (repo != null) {
+                                tabViewModel.openAnotherRepository(repo, currentTabInformation)
+                            }
+                        },
+                        onQuickActions = { showQuickActionsDialog = true },
+                        onShowSettingsDialog = onShowSettingsDialog
                     )
-                } else {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Menu(
-                            modifier = Modifier
-                                .padding(
-                                    vertical = 4.dp
-                                )
-                                .fillMaxWidth(),
-                            onCreateBranch = { showNewBranchDialog = true },
-                            onStashWithMessage = { showStashWithMessageDialog = true },
-                            onOpenAnotherRepository = { openRepositoryDialog(tabViewModel) },
-                            onQuickActions = { showQuickActionsDialog = true },
-                            onShowSettingsDialog = onShowSettingsDialog
-                        )
 
-                        RepoContent(
-                            tabViewModel = tabViewModel,
-                            diffSelected = diffSelected,
-                            selectedItem = selectedItem,
-                            repositoryState = repositoryState,
-                            blameState = blameState,
-                            showHistory = showHistory,
-                        )
-                    }
+                    RepoContent(
+                        tabViewModel = tabViewModel,
+                        diffSelected = diffSelected,
+                        selectedItem = selectedItem,
+                        repositoryState = repositoryState,
+                        blameState = blameState,
+                        showHistory = showHistory,
+                    )
                 }
             }
         }
@@ -166,33 +167,9 @@ fun RepositoryOpenPage(
 }
 
 @Composable
-fun RebaseInteractiveStartedExternally(
-    onCancelRebaseInteractive: () -> Unit,
-) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(
-            "Rebase interactive started externally or Gitnuro (or this repository's tab)\nhas been restarted during the rebase.",
-            textAlign = TextAlign.Center,
-            fontWeight = FontWeight.Medium,
-            style = MaterialTheme.typography.body1,
-        )
-        PrimaryButton(
-            modifier = Modifier.padding(top = 8.dp),
-            text = "Abort rebase interactive",
-            onClick = onCancelRebaseInteractive,
-            backgroundColor = MaterialTheme.colors.error,
-            textColor = MaterialTheme.colors.onError,
-        )
-    }
-}
-
-@Composable
 private fun BottomInfoBar(tabViewModel: TabViewModel) {
     val userInfo by tabViewModel.authorInfoSimple.collectAsState()
+    val newUpdate = tabViewModel.hasUpdates.collectAsState().value
 
     Row(
         modifier = Modifier
@@ -214,6 +191,22 @@ private fun BottomInfoBar(tabViewModel: TabViewModel) {
                 color = MaterialTheme.colors.onBackground,
             )
         }
+        Spacer(Modifier.weight(1f, true))
+
+        if (newUpdate != null) {
+            SecondaryButton(
+                text = "Update ${newUpdate.appVersion} available",
+                onClick = { tabViewModel.openUrlInBrowser(newUpdate.downloadUrl) },
+                backgroundButton = MaterialTheme.colors.primary,
+                modifier = Modifier.padding(end = 16.dp)
+            )
+        }
+
+        Text(
+            "Version ${AppConstants.APP_VERSION}",
+            style = MaterialTheme.typography.body2,
+            maxLines = 1,
+        )
     }
 }
 
@@ -248,7 +241,6 @@ fun RepoContent(
     }
 }
 
-@OptIn(ExperimentalSplitPaneApi::class)
 @Composable
 fun MainContentView(
     tabViewModel: TabViewModel,
@@ -257,153 +249,146 @@ fun MainContentView(
     repositoryState: RepositoryState,
     blameState: BlameState,
 ) {
-    HorizontalSplitPane(
-        splitPaneState = rememberSplitPaneState(initialPositionPercentage = 0.20f)
-    ) {
-        first(minSize = 180.dp) {
+    val rebaseInteractiveState by tabViewModel.rebaseInteractiveState.collectAsState()
+    val density = LocalDensity.current.density
+
+    var firstWidth by remember(tabViewModel) { mutableStateOf(tabViewModel.firstPaneWidth) }
+    var thirdWidth by remember(tabViewModel) { mutableStateOf(tabViewModel.thirdPaneWidth) }
+
+    TripleVerticalSplitPanel(
+        modifier = Modifier.fillMaxSize(),
+        firstWidth = if(rebaseInteractiveState is RebaseInteractiveState.AwaitingInteraction) 0f else firstWidth,
+        thirdWidth = thirdWidth,
+        first = {
             SidePanel()
-        }
-
-        splitter {
-            this.repositorySplitter()
-        }
-
-        second {
-            HorizontalSplitPane(
-                splitPaneState = rememberSplitPaneState(0.9f)
+        },
+        second = {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
             ) {
-                first {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                    ) {
-                        if (blameState is BlameState.Loaded && !blameState.isMinimized) {
-                            Blame(
-                                filePath = blameState.filePath,
-                                blameResult = blameState.blameResult,
-                                onClose = { tabViewModel.resetBlameState() },
-                                onSelectCommit = { tabViewModel.selectCommit(it) }
-                            )
-                        } else {
-                            Column {
-                                Box(modifier = Modifier.weight(1f, true)) {
-                                    when (diffSelected) {
-                                        null -> {
-                                            Log(
-                                                selectedItem = selectedItem,
-                                                repositoryState = repositoryState,
-                                            )
-                                        }
-
-                                        else -> {
-                                            val diffViewModel = tabViewModel.diffViewModel
-
-                                            if (diffViewModel != null) {
-                                                Diff(
-                                                    diffViewModel = diffViewModel,
-                                                    onCloseDiffView = {
-                                                        tabViewModel.newDiffSelected = null
-                                                    }
-                                                )
-                                            }
-                                        }
-                                    }
+                if (rebaseInteractiveState == RebaseInteractiveState.AwaitingInteraction && diffSelected == null) {
+                    RebaseInteractive()
+                } else if (blameState is BlameState.Loaded && !blameState.isMinimized) {
+                    Blame(
+                        filePath = blameState.filePath,
+                        blameResult = blameState.blameResult,
+                        onClose = { tabViewModel.resetBlameState() },
+                        onSelectCommit = { tabViewModel.selectCommit(it) }
+                    )
+                } else {
+                    Column {
+                        Box(modifier = Modifier.weight(1f, true)) {
+                            when (diffSelected) {
+                                null -> {
+                                    Log(
+                                        selectedItem = selectedItem,
+                                        repositoryState = repositoryState,
+                                    )
                                 }
 
-                                if (blameState is BlameState.Loaded) { // BlameState.isMinimized is true here
-                                    MinimizedBlame(
-                                        filePath = blameState.filePath,
-                                        onExpand = { tabViewModel.expandBlame() },
-                                        onClose = { tabViewModel.resetBlameState() }
-                                    )
+                                else -> {
+                                    val diffViewModel = tabViewModel.diffViewModel
+
+                                    if (diffViewModel != null) {
+                                        Diff(
+                                            diffViewModel = diffViewModel,
+                                            onCloseDiffView = {
+                                                tabViewModel.newDiffSelected = null
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
-                    }
-                }
 
-                splitter {
-                    this.repositorySplitter()
-                }
-
-                second(minSize = 250.dp) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                    ) {
-                        val safeSelectedItem = selectedItem
-                        if (safeSelectedItem == SelectedItem.UncommitedChanges) {
-                            UncommitedChanges(
-                                selectedEntryType = diffSelected,
-                                repositoryState = repositoryState,
-                                onStagedDiffEntrySelected = { diffEntry ->
-                                    tabViewModel.minimizeBlame()
-
-                                    tabViewModel.newDiffSelected = if (diffEntry != null) {
-                                        if (repositoryState == RepositoryState.SAFE)
-                                            DiffEntryType.SafeStagedDiff(diffEntry)
-                                        else
-                                            DiffEntryType.UnsafeStagedDiff(diffEntry)
-                                    } else {
-                                        null
-                                    }
-                                },
-                                onUnstagedDiffEntrySelected = { diffEntry ->
-                                    tabViewModel.minimizeBlame()
-
-                                    if (repositoryState == RepositoryState.SAFE)
-                                        tabViewModel.newDiffSelected = DiffEntryType.SafeUnstagedDiff(diffEntry)
-                                    else
-                                        tabViewModel.newDiffSelected = DiffEntryType.UnsafeUnstagedDiff(diffEntry)
-                                },
-                                onBlameFile = { tabViewModel.blameFile(it) },
-                                onHistoryFile = { tabViewModel.fileHistory(it) }
-                            )
-                        } else if (safeSelectedItem is SelectedItem.CommitBasedItem) {
-                            CommitChanges(
-                                selectedItem = safeSelectedItem,
-                                diffSelected = diffSelected,
-                                onDiffSelected = { diffEntry ->
-                                    tabViewModel.minimizeBlame()
-                                    tabViewModel.newDiffSelected = DiffEntryType.CommitDiff(diffEntry)
-                                },
-                                onBlame = { tabViewModel.blameFile(it) },
-                                onHistory = { tabViewModel.fileHistory(it) },
+                        if (blameState is BlameState.Loaded) { // BlameState.isMinimized is true here
+                            MinimizedBlame(
+                                filePath = blameState.filePath,
+                                onExpand = { tabViewModel.expandBlame() },
+                                onClose = { tabViewModel.resetBlameState() }
                             )
                         }
                     }
                 }
             }
-        }
-    }
+        },
+        third = {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+            ) {
+                when (selectedItem) {
+                    SelectedItem.UncommittedChanges -> {
+                        UncommittedChanges(
+                            selectedEntryType = diffSelected,
+                            repositoryState = repositoryState,
+                            onStagedDiffEntrySelected = { diffEntry ->
+                                tabViewModel.minimizeBlame()
+
+                                tabViewModel.newDiffSelected = if (diffEntry != null) {
+                                    if (repositoryState == RepositoryState.SAFE)
+                                        DiffEntryType.SafeStagedDiff(diffEntry)
+                                    else
+                                        DiffEntryType.UnsafeStagedDiff(diffEntry)
+                                } else {
+                                    null
+                                }
+                            },
+                            onUnstagedDiffEntrySelected = { diffEntry ->
+                                tabViewModel.minimizeBlame()
+
+                                if (repositoryState == RepositoryState.SAFE)
+                                    tabViewModel.newDiffSelected = DiffEntryType.SafeUnstagedDiff(diffEntry)
+                                else
+                                    tabViewModel.newDiffSelected = DiffEntryType.UnsafeUnstagedDiff(diffEntry)
+                            },
+                            onBlameFile = { tabViewModel.blameFile(it) },
+                            onHistoryFile = { tabViewModel.fileHistory(it) }
+                        )
+                    }
+
+                    is SelectedItem.CommitBasedItem -> {
+                        CommitChanges(
+                            selectedItem = selectedItem,
+                            diffSelected = diffSelected,
+                            onDiffSelected = { diffEntry ->
+                                tabViewModel.minimizeBlame()
+                                tabViewModel.newDiffSelected = DiffEntryType.CommitDiff(diffEntry)
+                            },
+                            onBlame = { tabViewModel.blameFile(it) },
+                            onHistory = { tabViewModel.fileHistory(it) },
+                        )
+                    }
+
+                    SelectedItem.None -> {}
+                }
+            }
+        },
+        onFirstSizeDrag = {
+            val newWidth = firstWidth + it / density
+
+            if (newWidth > 150 && rebaseInteractiveState !is RebaseInteractiveState.AwaitingInteraction) {
+                firstWidth = newWidth
+                tabViewModel.firstPaneWidth = firstWidth
+            }
+        },
+        onThirdSizeDrag = {
+            val newWidth = thirdWidth - it / density
+
+            if (newWidth > 150) {
+                thirdWidth = newWidth
+                tabViewModel.thirdPaneWidth = thirdWidth
+            }
+        },
+    )
 }
 
-fun SplitterScope.repositorySplitter() {
-    visiblePart {
-        Box(
-            Modifier
-                .width(8.dp)
-                .fillMaxHeight()
-                .background(Color.Transparent)
-        )
-    }
-    handle {
-        Box(
-            Modifier
-                .markAsHandle()
-                .pointerHoverIcon(PointerIcon(Cursor(Cursor.E_RESIZE_CURSOR)))
-                .background(Color.Transparent)
-                .width(8.dp)
-                .fillMaxHeight()
-        )
-    }
-}
-
-sealed class SelectedItem {
-    object None : SelectedItem()
-    object UncommitedChanges : SelectedItem()
-    sealed class CommitBasedItem(val revCommit: RevCommit) : SelectedItem()
-    class Ref(revCommit: RevCommit) : CommitBasedItem(revCommit)
+sealed interface SelectedItem {
+    data object None : SelectedItem
+    data object UncommittedChanges : SelectedItem
+    sealed class CommitBasedItem(val revCommit: RevCommit) : SelectedItem
+    class Ref(val ref: org.eclipse.jgit.lib.Ref, revCommit: RevCommit) : CommitBasedItem(revCommit)
     class Commit(revCommit: RevCommit) : CommitBasedItem(revCommit)
     class Stash(revCommit: RevCommit) : CommitBasedItem(revCommit)
 }

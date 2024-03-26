@@ -1,38 +1,47 @@
 package com.jetpackduba.gitnuro.viewmodels
 
-import com.jetpackduba.gitnuro.AppStateManager
-import com.jetpackduba.gitnuro.ErrorsManager
+import com.jetpackduba.gitnuro.SharedRepositoryStateManager
+import com.jetpackduba.gitnuro.TaskType
+import com.jetpackduba.gitnuro.credentials.CredentialsAccepted
 import com.jetpackduba.gitnuro.credentials.CredentialsState
 import com.jetpackduba.gitnuro.credentials.CredentialsStateManager
 import com.jetpackduba.gitnuro.git.*
 import com.jetpackduba.gitnuro.git.branches.CreateBranchUseCase
-import com.jetpackduba.gitnuro.git.rebase.AbortRebaseUseCase
-import com.jetpackduba.gitnuro.git.repository.GetRepositoryStateUseCase
+import com.jetpackduba.gitnuro.git.rebase.RebaseInteractiveState
 import com.jetpackduba.gitnuro.git.repository.InitLocalRepositoryUseCase
 import com.jetpackduba.gitnuro.git.repository.OpenRepositoryUseCase
+import com.jetpackduba.gitnuro.git.repository.OpenSubmoduleRepositoryUseCase
 import com.jetpackduba.gitnuro.git.stash.StashChangesUseCase
 import com.jetpackduba.gitnuro.git.workspace.StageUntrackedFileUseCase
+import com.jetpackduba.gitnuro.logging.printDebug
 import com.jetpackduba.gitnuro.logging.printLog
+import com.jetpackduba.gitnuro.managers.AppStateManager
+import com.jetpackduba.gitnuro.managers.ErrorsManager
+import com.jetpackduba.gitnuro.managers.newErrorNow
 import com.jetpackduba.gitnuro.models.AuthorInfoSimple
-import com.jetpackduba.gitnuro.newErrorNow
+import com.jetpackduba.gitnuro.system.OpenFilePickerUseCase
+import com.jetpackduba.gitnuro.system.OpenUrlInBrowserUseCase
+import com.jetpackduba.gitnuro.system.PickerType
 import com.jetpackduba.gitnuro.ui.SelectedItem
+import com.jetpackduba.gitnuro.ui.TabsManager
+import com.jetpackduba.gitnuro.ui.components.TabInformation
 import com.jetpackduba.gitnuro.updates.Update
 import com.jetpackduba.gitnuro.updates.UpdatesRepository
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.*
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.api.errors.CheckoutConflictException
 import org.eclipse.jgit.blame.BlameResult
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.lib.RepositoryState
 import org.eclipse.jgit.revwalk.RevCommit
+import uniffi.gitnuro.WatcherInitException
 import java.awt.Desktop
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Provider
 
-private const val MIN_TIME_IN_MS_BETWEEN_REFRESHES = 1000L
+private const val MIN_TIME_AFTER_GIT_OPERATION = 2000L
 
 private const val TAG = "TabViewModel"
 
@@ -42,11 +51,10 @@ private const val TAG = "TabViewModel"
  * across full app recompositions), therefore, tab's content can be recreated with these view models.
  */
 class TabViewModel @Inject constructor(
-    private val getRepositoryStateUseCase: GetRepositoryStateUseCase,
     private val initLocalRepositoryUseCase: InitLocalRepositoryUseCase,
     private val openRepositoryUseCase: OpenRepositoryUseCase,
+    private val openSubmoduleRepositoryUseCase: OpenSubmoduleRepositoryUseCase,
     private val diffViewModelProvider: Provider<DiffViewModel>,
-    private val rebaseInteractiveViewModelProvider: Provider<RebaseInteractiveViewModel>,
     private val historyViewModelProvider: Provider<HistoryViewModel>,
     private val authorViewModelProvider: Provider<AuthorViewModel>,
     private val tabState: TabState,
@@ -57,21 +65,27 @@ class TabViewModel @Inject constructor(
     private val createBranchUseCase: CreateBranchUseCase,
     private val stashChangesUseCase: StashChangesUseCase,
     private val stageUntrackedFileUseCase: StageUntrackedFileUseCase,
-    private val abortRebaseUseCase: AbortRebaseUseCase,
+    private val openFilePickerUseCase: OpenFilePickerUseCase,
+    private val openUrlInBrowserUseCase: OpenUrlInBrowserUseCase,
+    private val sharedRepositoryStateManager: SharedRepositoryStateManager,
+    private val tabsManager: TabsManager,
     private val tabScope: CoroutineScope,
 ) {
+    var firstPaneWidth = 220f
+    var thirdPaneWidth = 360f
+    var initialPath: String? = null // Stores the path that should be opened when the tab is selected
     val errorsManager: ErrorsManager = tabState.errorsManager
     val selectedItem: StateFlow<SelectedItem> = tabState.selectedItem
     var diffViewModel: DiffViewModel? = null
-
-    var rebaseInteractiveViewModel: RebaseInteractiveViewModel? = null
-        private set
 
     private val _repositorySelectionStatus = MutableStateFlow<RepositorySelectionStatus>(RepositorySelectionStatus.None)
     val repositorySelectionStatus: StateFlow<RepositorySelectionStatus>
         get() = _repositorySelectionStatus
 
-    val processing: StateFlow<Boolean> = tabState.processing
+    val repositoryState: StateFlow<RepositoryState> = sharedRepositoryStateManager.repositoryState
+    val rebaseInteractiveState: StateFlow<RebaseInteractiveState> = sharedRepositoryStateManager.rebaseInteractiveState
+
+    val processing: StateFlow<ProcessingState> = tabState.processing
 
     val credentialsState: StateFlow<CredentialsState> = credentialsStateManager.credentialsState
 
@@ -84,9 +98,6 @@ class TabViewModel @Inject constructor(
             _diffSelected.value = value
             updateDiffEntry()
         }
-
-    private val _repositoryState = MutableStateFlow(RepositoryState.SAFE)
-    val repositoryState: StateFlow<RepositoryState> = _repositoryState
 
     private val _blameState = MutableStateFlow<BlameState>(BlameState.None)
     val blameState: StateFlow<BlameState> = _blameState
@@ -111,42 +122,27 @@ class TabViewModel @Inject constructor(
     init {
         tabScope.run {
             launch {
-                tabState.refreshData.collect { refreshType ->
-                    when (refreshType) {
-                        RefreshType.NONE -> printLog(TAG, "Not refreshing...")
-                        RefreshType.REPO_STATE -> refreshRepositoryState()
-                        else -> {}
-                    }
-                }
-            }
-            launch {
-                tabState.taskEvent.collect { taskEvent ->
-                    when (taskEvent) {
-                        is TaskEvent.RebaseInteractive -> onRebaseInteractive(taskEvent)
-                        else -> { /*Nothing to do here*/
-                        }
-                    }
+                tabState.refreshFlowFiltered(RefreshType.ALL_DATA, RefreshType.REPO_STATE) {
+                    loadAuthorInfo(tabState.git)
                 }
             }
 
             launch {
-                tabState.refreshFlowFiltered(RefreshType.ALL_DATA, RefreshType.REPO_STATE)
-                {
-                    loadRepositoryState(tabState.git)
+                errorsManager.error.collect {
+                    showError.value = true
                 }
             }
         }
     }
 
-    private fun refreshRepositoryState() = tabState.safeProcessing(
-        refreshType = RefreshType.NONE,
-    ) { git ->
-        loadRepositoryState(git)
-    }
 
-    private suspend fun onRebaseInteractive(taskEvent: TaskEvent.RebaseInteractive) {
-        rebaseInteractiveViewModel = rebaseInteractiveViewModelProvider.get()
-        rebaseInteractiveViewModel?.startRebaseInteractive(taskEvent.revCommit)
+    /**
+     * To make sure the tab opens the new repository with a clean state,
+     * instead of opening the repo in the same ViewModel we simply create a new tab with a new TabViewModel
+     * replacing the current tab
+     */
+    fun openAnotherRepository(directory: String, current: TabInformation) {
+        tabsManager.addNewTabFromPath(directory, true, current)
     }
 
     fun openRepository(directory: String) {
@@ -158,36 +154,41 @@ class TabViewModel @Inject constructor(
 
         _repositorySelectionStatus.value = RepositorySelectionStatus.Opening(directory.absolutePath)
 
-        val repository: Repository = openRepositoryUseCase(directory)
-
         try {
+            val repository: Repository = if (directory.listFiles()?.any { it.name == ".git" && it.isFile } == true) {
+                openSubmoduleRepositoryUseCase(directory)
+            } else {
+                openRepositoryUseCase(directory)
+            }
+
             repository.workTree // test if repository is valid
             _repositorySelectionStatus.value = RepositorySelectionStatus.Open(repository)
             val git = Git(repository)
             tabState.initGit(git)
 
-            onRepositoryChanged(repository.directory.parent)
-            tabState.newSelectedItem(selectedItem = SelectedItem.UncommitedChanges)
+            val path = if (directory.name == ".git") {
+                directory.parent
+            } else
+                directory.absolutePath
+
+            onRepositoryChanged(path)
+            tabState.newSelectedItem(selectedItem = SelectedItem.UncommittedChanges)
             newDiffSelected = null
             refreshRepositoryInfo()
 
             watchRepositoryChanges(git)
         } catch (ex: Exception) {
-            ex.printStackTrace()
             onRepositoryChanged(null)
-            errorsManager.addError(newErrorNow(ex, ex.localizedMessage))
+            ex.printStackTrace()
+
+            errorsManager.addError(
+                newErrorNow(
+                    taskType = TaskType.REPOSITORY_OPEN,
+                    exception = ex
+                )
+            )
             _repositorySelectionStatus.value = RepositorySelectionStatus.None
         }
-    }
-
-    private suspend fun loadRepositoryState(git: Git) = withContext(Dispatchers.IO) {
-        val newRepoState = getRepositoryStateUseCase(git)
-        printLog(TAG, "Refreshing repository state $newRepoState")
-        _repositoryState.value = newRepoState
-
-        loadAuthorInfo(git)
-
-        onRepositoryStateChanged(newRepoState)
     }
 
     private fun loadAuthorInfo(git: Git) {
@@ -210,63 +211,71 @@ class TabViewModel @Inject constructor(
         authorViewModel = null
     }
 
-    private fun onRepositoryStateChanged(newRepoState: RepositoryState) {
-        if (newRepoState != RepositoryState.REBASING_INTERACTIVE && rebaseInteractiveViewModel != null) {
-            rebaseInteractiveViewModel?.cancel()
-            rebaseInteractiveViewModel = null
-        }
-    }
+    /**
+     * Sometimes external apps can run filesystem multiple operations in a fraction of a second.
+     * To prevent excessive updates, we add a slight delay between updates emission to prevent slowing down
+     * the app by constantly running "git status" or even full refreshes.
+     *
+     */
 
     private suspend fun watchRepositoryChanges(git: Git) = tabScope.launch(Dispatchers.IO) {
-        val ignored = git.status().call().ignoredNotInIndex.toList()
-        var asyncJob: Job? = null
-        var lastNotify = 0L
         var hasGitDirChanged = false
 
         launch {
             fileChangesWatcher.changesNotifier.collect { latestUpdateChangedGitDir ->
                 if (!tabState.operationRunning) { // Only update if there isn't any process running
-                    printLog(TAG, "Detected changes in the repository's directory")
+                    printDebug(TAG, "Detected changes in the repository's directory")
+
+                    val currentTimeMillis = System.currentTimeMillis()
+
+                    if (currentTimeMillis - tabState.lastOperation < MIN_TIME_AFTER_GIT_OPERATION) {
+                        printDebug(TAG, "Git operation was executed recently, ignoring file system change")
+                        return@collect
+                    }
 
                     if (latestUpdateChangedGitDir) {
                         hasGitDirChanged = true
                     }
 
-                    asyncJob?.cancel()
-
-                    // Sometimes external apps can run filesystem multiple operations in a fraction of a second.
-                    // To prevent excessive updates, we add a slight delay between updates emission to prevent slowing down
-                    // the app by constantly running "git status".
-                    val currentTimeMillis = System.currentTimeMillis()
-                    val diffTime = currentTimeMillis - lastNotify
-
-                    // When .git dir has changed, do the refresh with a delay to avoid doing operations while a git
-                    // operation may be running
-                    if (diffTime > MIN_TIME_IN_MS_BETWEEN_REFRESHES && !hasGitDirChanged) {
-                        updateApp(false)
-                        printLog(TAG, "Sync emit with diff time $diffTime")
-                    } else {
-                        asyncJob = async {
-                            delay(MIN_TIME_IN_MS_BETWEEN_REFRESHES)
-                            printLog(TAG, "Async emit")
-                            if (isActive)
-                                updateApp(hasGitDirChanged)
-
-                            hasGitDirChanged = false
-                        }
+                    if (isActive) {
+                        updateApp(hasGitDirChanged)
                     }
 
-                    lastNotify = currentTimeMillis
+                    hasGitDirChanged = false
+                } else {
+                    printDebug(TAG, "Ignored file events during operation")
                 }
             }
         }
-        fileChangesWatcher.watchDirectoryPath(
-            pathStr = git.repository.directory.parent,
-            ignoredDirsPath = ignored,
-        )
+
+        try {
+            fileChangesWatcher.watchDirectoryPath(
+                repository = git.repository,
+            )
+        } catch (ex: WatcherInitException) {
+            val message = when (ex) {
+                is WatcherInitException.Generic -> ex.error
+                is WatcherInitException.InvalidConfig -> "Invalid configuration"
+                is WatcherInitException.Io -> ex.error
+                is WatcherInitException.MaxFilesWatch -> "Reached the limit of files that can be watched. Please increase the system inotify limit to be able to detect the changes on this repository."
+                is WatcherInitException.PathNotFound -> "Path not found, check if your repository still exists"
+                is WatcherInitException.WatchNotFound -> null // This should never trigger as we don't unwatch files
+            }
+
+            if (message != null) {
+                errorsManager.addError(
+                    newErrorNow(
+                        exception = ex,
+                        taskType = TaskType.CHANGES_DETECTION,
+//                        title = "Repository changes detection has stopped working",
+//                        message = message,
+                    ),
+                )
+            }
+        }
     }
 
-    suspend fun updateApp(hasGitDirChanged: Boolean) {
+    private suspend fun updateApp(hasGitDirChanged: Boolean) {
         if (hasGitDirChanged) {
             printLog(TAG, "Changes detected in git directory, full refresh")
 
@@ -274,20 +283,15 @@ class TabViewModel @Inject constructor(
         } else {
             printLog(TAG, "Changes detected, partial refresh")
 
-            checkUncommitedChanges()
+            checkUncommittedChanges()
         }
     }
 
-    private suspend fun checkUncommitedChanges() = tabState.runOperation(
+    private suspend fun checkUncommittedChanges() = tabState.runOperation(
         refreshType = RefreshType.NONE,
     ) {
         updateDiffEntry()
-        tabState.refreshData(RefreshType.UNCOMMITED_CHANGES_AND_LOG)
-//
-//        // Stashes list should only be updated if we are doing a stash operation, however it's a small operation
-//        // that we can afford to do when doing other operations
-//        stashesViewModel.refresh(git)
-//        loadRepositoryState(git)
+        tabState.refreshData(RefreshType.UNCOMMITTED_CHANGES_AND_LOG)
     }
 
     private suspend fun refreshRepositoryInfo() {
@@ -299,15 +303,14 @@ class TabViewModel @Inject constructor(
     }
 
     fun httpCredentialsAccepted(user: String, password: String) {
-        credentialsStateManager.updateState(CredentialsState.HttpCredentialsAccepted(user, password))
+        credentialsStateManager.updateState(CredentialsAccepted.HttpCredentialsAccepted(user, password))
     }
 
     fun sshCredentialsAccepted(password: String) {
-        credentialsStateManager.updateState(CredentialsState.SshCredentialsAccepted(password))
+        credentialsStateManager.updateState(CredentialsAccepted.SshCredentialsAccepted(password))
     }
 
     var onRepositoryChanged: (path: String?) -> Unit = {}
-
 
     fun dispose() {
         tabScope.cancel()
@@ -329,25 +332,25 @@ class TabViewModel @Inject constructor(
         }
     }
 
-    fun initLocalRepository(dir: String) = tabState.safeProcessingWithoutGit(
-        showError = true,
-    ) {
+    fun openDirectoryPicker(): String? {
+        val latestDirectoryOpened = appStateManager.latestOpenedRepositoryPath
+
+        return openFilePickerUseCase(PickerType.DIRECTORIES, latestDirectoryOpened)
+    }
+
+    fun initLocalRepository(dir: String) = tabState.safeProcessingWithoutGit {
         val repoDir = File(dir)
         initLocalRepositoryUseCase(repoDir)
         openRepository(repoDir)
     }
 
-    suspend fun latestRelease(): Update? = withContext(Dispatchers.IO) {
-        try {
-            updatesRepository.latestRelease()
-        } catch (ex: Exception) {
-            ex.printStackTrace()
-            null
-        }
-    }
+    val hasUpdates: StateFlow<Update?> = updatesRepository.hasUpdatesFlow()
+        .flowOn(Dispatchers.IO)
+        .stateIn(tabScope, started = SharingStarted.Eagerly, null)
 
     fun blameFile(filePath: String) = tabState.safeProcessing(
         refreshType = RefreshType.NONE,
+        taskType = TaskType.BLAME_FILE,
     ) { git ->
         _blameState.value = BlameState.Loading(filePath)
         try {
@@ -387,13 +390,7 @@ class TabViewModel @Inject constructor(
     fun selectCommit(commit: RevCommit) = tabState.runOperation(
         refreshType = RefreshType.NONE,
     ) {
-        tabState.newSelectedItem(SelectedItem.Commit(commit))
-    }
-
-    fun selectUncommitedChanges() = tabState.runOperation(
-        refreshType = RefreshType.NONE,
-    ) {
-        tabState.newSelectedItem(SelectedItem.UncommitedChanges, true)
+        tabState.newSelectedCommit(commit)
     }
 
     fun fileHistory(filePath: String) {
@@ -417,12 +414,14 @@ class TabViewModel @Inject constructor(
     fun createBranch(branchName: String) = tabState.safeProcessing(
         refreshType = RefreshType.ALL_DATA,
         refreshEvenIfCrashesInteractive = { it is CheckoutConflictException },
+        taskType = TaskType.CREATE_BRANCH,
     ) { git ->
         createBranchUseCase(git, branchName)
     }
 
     fun stashWithMessage(message: String) = tabState.safeProcessing(
-        refreshType = RefreshType.UNCOMMITED_CHANGES_AND_LOG,
+        refreshType = RefreshType.UNCOMMITTED_CHANGES_AND_LOG,
+        taskType = TaskType.STASH,
     ) { git ->
         stageUntrackedFileUseCase(git)
         stashChangesUseCase(git, message)
@@ -432,18 +431,19 @@ class TabViewModel @Inject constructor(
         showError = true,
         refreshType = RefreshType.NONE,
     ) { git ->
-        Desktop.getDesktop().open(git.repository.directory.parentFile)
-    }
-
-    fun cancelRebaseInteractive() = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        abortRebaseUseCase(git)
-        rebaseInteractiveViewModel = null // shouldn't be necessary but just to make sure
+        Desktop.getDesktop().open(git.repository.workTree)
     }
 
     fun gpgCredentialsAccepted(password: String) {
-        credentialsStateManager.updateState(CredentialsState.GpgCredentialsAccepted(password))
+        credentialsStateManager.updateState(CredentialsAccepted.GpgCredentialsAccepted(password))
+    }
+
+    fun cancelOngoingTask() {
+        tabState.cancelCurrentTask()
+    }
+
+    fun openUrlInBrowser(url: String) {
+        openUrlInBrowserUseCase(url)
     }
 }
 
@@ -459,5 +459,5 @@ sealed interface BlameState {
 
     data class Loaded(val filePath: String, val blameResult: BlameResult, val isMinimized: Boolean = false) : BlameState
 
-    object None : BlameState
+    data object None : BlameState
 }

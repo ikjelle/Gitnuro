@@ -1,9 +1,11 @@
 package com.jetpackduba.gitnuro.viewmodels
 
 import com.jetpackduba.gitnuro.di.TabScope
-import com.jetpackduba.gitnuro.viewmodels.sidepanel.*
+import com.jetpackduba.gitnuro.viewmodels.sidepanel.SidePanelViewModel
+import com.jetpackduba.gitnuro.viewmodels.sidepanel.SubmoduleDialogViewModel
 import javax.inject.Inject
 import javax.inject.Provider
+import kotlin.reflect.KClass
 
 @TabScope
 class TabViewModelsHolder @Inject constructor(
@@ -14,11 +16,14 @@ class TabViewModelsHolder @Inject constructor(
     cloneViewModel: CloneViewModel,
     settingsViewModel: SettingsViewModel,
     sidePanelViewModel: SidePanelViewModel,
+    rebaseInteractiveViewModel: RebaseInteractiveViewModel,
     // Dynamic VM
     private val diffViewModelProvider: Provider<DiffViewModel>,
-    private val rebaseInteractiveViewModelProvider: Provider<RebaseInteractiveViewModel>,
     private val historyViewModelProvider: Provider<HistoryViewModel>,
     private val authorViewModelProvider: Provider<AuthorViewModel>,
+    private val changeDefaultUpstreamBranchViewModelProvider: Provider<ChangeDefaultUpstreamBranchViewModel>,
+    private val submoduleDialogViewModelProvider: Provider<SubmoduleDialogViewModel>,
+    private val signOffDialogViewModelProvider: Provider<SignOffDialogViewModel>,
 ) {
     val viewModels = mapOf(
         logViewModel::class to logViewModel,
@@ -28,10 +33,19 @@ class TabViewModelsHolder @Inject constructor(
         commitChangesViewModel::class to commitChangesViewModel,
         cloneViewModel::class to cloneViewModel,
         settingsViewModel::class to settingsViewModel,
+        rebaseInteractiveViewModel::class to rebaseInteractiveViewModel,
     )
 
-
-    fun getVMAndCacheIt() {
-
+    // TODO Call this when required
+    fun dynamicViewModel(type: KClass<*>): Any {
+        return when (type) {
+            DiffViewModel::class -> diffViewModelProvider.get()
+            HistoryViewModel::class -> historyViewModelProvider.get()
+            AuthorViewModel::class -> authorViewModelProvider.get()
+            ChangeDefaultUpstreamBranchViewModel::class -> changeDefaultUpstreamBranchViewModelProvider.get()
+            SubmoduleDialogViewModel::class -> submoduleDialogViewModelProvider.get()
+            SignOffDialogViewModel::class -> signOffDialogViewModelProvider.get()
+            else -> throw NotImplementedError("View model provider not implemented")
+        }
     }
 }

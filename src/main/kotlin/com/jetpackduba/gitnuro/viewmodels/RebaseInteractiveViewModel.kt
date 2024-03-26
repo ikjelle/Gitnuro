@@ -1,23 +1,18 @@
 package com.jetpackduba.gitnuro.viewmodels
 
+import com.jetpackduba.gitnuro.TaskType
 import com.jetpackduba.gitnuro.exceptions.InvalidMessageException
 import com.jetpackduba.gitnuro.exceptions.RebaseCancelledException
 import com.jetpackduba.gitnuro.git.RefreshType
 import com.jetpackduba.gitnuro.git.TabState
-import com.jetpackduba.gitnuro.git.rebase.AbortRebaseUseCase
-import com.jetpackduba.gitnuro.git.rebase.GetRebaseLinesFullMessageUseCase
-import com.jetpackduba.gitnuro.git.rebase.ResumeRebaseInteractiveUseCase
-import com.jetpackduba.gitnuro.git.rebase.StartRebaseInteractiveUseCase
-import com.jetpackduba.gitnuro.logging.printLog
+import com.jetpackduba.gitnuro.git.rebase.*
+import com.jetpackduba.gitnuro.git.repository.GetRepositoryStateUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.sync.Mutex
 import org.eclipse.jgit.api.RebaseCommand.InteractiveHandler
 import org.eclipse.jgit.lib.AbbreviatedObjectId
 import org.eclipse.jgit.lib.RebaseTodoLine
 import org.eclipse.jgit.lib.RebaseTodoLine.Action
-import org.eclipse.jgit.revwalk.RevCommit
 import javax.inject.Inject
 
 private const val TAG = "RebaseInteractiveViewMo"
@@ -25,68 +20,84 @@ private const val TAG = "RebaseInteractiveViewMo"
 class RebaseInteractiveViewModel @Inject constructor(
     private val tabState: TabState,
     private val getRebaseLinesFullMessageUseCase: GetRebaseLinesFullMessageUseCase,
-    private val startRebaseInteractiveUseCase: StartRebaseInteractiveUseCase,
+    private val getCommitFromRebaseLineUseCase: GetCommitFromRebaseLineUseCase,
+    private val getRebaseInteractiveTodoLinesUseCase: GetRebaseInteractiveTodoLinesUseCase,
     private val abortRebaseUseCase: AbortRebaseUseCase,
     private val resumeRebaseInteractiveUseCase: ResumeRebaseInteractiveUseCase,
+    private val getRepositoryStateUseCase: GetRepositoryStateUseCase,
 ) {
-    private val rebaseInteractiveMutex = Mutex(true)
-    private val _rebaseState = MutableStateFlow<RebaseInteractiveState>(RebaseInteractiveState.Loading)
-    val rebaseState: StateFlow<RebaseInteractiveState> = _rebaseState
-    var rewordSteps = ArrayDeque<RebaseTodoLine>()
+    private val _rebaseState = MutableStateFlow<RebaseInteractiveViewState>(RebaseInteractiveViewState.Loading)
+    val rebaseState: StateFlow<RebaseInteractiveViewState> = _rebaseState
 
-    private var cancelled = false
-    private var completed = false
+    val selectedItem = tabState.selectedItem
+    var rewordSteps = ArrayDeque<RebaseLine>()
 
-    private var interactiveHandler = object : InteractiveHandler {
-        override fun prepareSteps(steps: MutableList<RebaseTodoLine>) = runBlocking {
-            println("prepareSteps started")
-            tabState.refreshData(RefreshType.REPO_STATE)
-
-            val messages = getRebaseLinesFullMessageUseCase(tabState.git, steps)
-
-            _rebaseState.value = RebaseInteractiveState.Loaded(steps, messages)
-
-            println("prepareSteps mutex lock")
-            rebaseInteractiveMutex.lock()
-
-            if (cancelled) {
-                throw RebaseCancelledException("Rebase cancelled due to user request")
-            }
-
+    private var interactiveHandlerContinue = object : InteractiveHandler {
+        override fun prepareSteps(steps: MutableList<RebaseTodoLine>) {
             val rebaseState = _rebaseState.value
-            if (rebaseState !is RebaseInteractiveState.Loaded) {
+            if (rebaseState !is RebaseInteractiveViewState.Loaded) {
                 throw Exception("prepareSteps called when rebaseState is not Loaded") // Should never happen, just in case
             }
 
-            val newSteps = rebaseState.stepsList
-            rewordSteps = ArrayDeque(newSteps.filter { it.action == Action.REWORD })
+            val newSteps = rebaseState.stepsList.toMutableList()
+            rewordSteps = ArrayDeque(newSteps.filter { it.rebaseAction == RebaseAction.REWORD })
+
+            val newRebaseTodoLines = newSteps
+                .filter { it.rebaseAction != RebaseAction.DROP } // Remove dropped lines
+                .map { it.toRebaseTodoLine() }
 
             steps.clear()
-            steps.addAll(newSteps)
-            println("prepareSteps finished")
+            steps.addAll(newRebaseTodoLines)
         }
 
-        override fun modifyCommitMessage(commit: String): String = runBlocking {
+        override fun modifyCommitMessage(commit: String): String {
             // This can be called when there aren't any reword steps if squash is used.
-            val step = rewordSteps.removeLastOrNull() ?: return@runBlocking commit
+            val step = rewordSteps.removeLastOrNull() ?: return commit
 
             val rebaseState = _rebaseState.value
-            if (rebaseState !is RebaseInteractiveState.Loaded) {
+            if (rebaseState !is RebaseInteractiveViewState.Loaded) {
                 throw Exception("modifyCommitMessage called when rebaseState is not Loaded") // Should never happen, just in case
             }
 
-            return@runBlocking rebaseState.messages[step.commit.name()]
+            return rebaseState.messages[step.commit.name()]
                 ?: throw InvalidMessageException("Message for commit $commit is unexpectedly null")
         }
     }
 
-    suspend fun startRebaseInteractive(revCommit: RevCommit) = tabState.runOperation(
-        refreshType = RefreshType.ALL_DATA,
-        showError = true
+    fun loadRebaseInteractiveData() = tabState.safeProcessing(
+        refreshType = RefreshType.NONE,
+        taskType = TaskType.REBASE_INTERACTIVE,// TODO Perhaps this should be more specific such as TaskType.LOAD_ABORT_REBASE
     ) { git ->
+        val state = getRepositoryStateUseCase(git)
+
+        if (!state.isRebasing) {
+            _rebaseState.value = RebaseInteractiveViewState.Loading
+            return@safeProcessing
+        }
+
         try {
-            startRebaseInteractiveUseCase(git, interactiveHandler, revCommit)
-            completed = true
+            val lines = getRebaseInteractiveTodoLinesUseCase(git)
+            val messages = getRebaseLinesFullMessageUseCase(tabState.git, lines)
+            val rebaseLines = lines.map {
+                RebaseLine(
+                    it.action.toRebaseAction(),
+                    it.commit,
+                    it.shortMessage,
+                )
+            }
+
+            val isSameRebase = isSameRebase(rebaseLines, _rebaseState.value)
+
+            if (!isSameRebase) {
+                _rebaseState.value = RebaseInteractiveViewState.Loaded(rebaseLines, messages)
+                val firstLine = rebaseLines.firstOrNull()
+
+                if (firstLine != null) {
+                    val fullCommit = getCommitFromRebaseLineUseCase(git, firstLine.commit, firstLine.shortMessage)
+                    tabState.newSelectedCommit(fullCommit)
+                }
+            }
+
         } catch (ex: Exception) {
             if (ex is RebaseCancelledException) {
                 println("Rebase cancelled")
@@ -97,16 +108,32 @@ class RebaseInteractiveViewModel @Inject constructor(
         }
     }
 
-    fun continueRebaseInteractive() = tabState.runOperation(
-        refreshType = RefreshType.ONLY_LOG,
-    ) {
-        rebaseInteractiveMutex.unlock()
+    private fun isSameRebase(rebaseLines: List<RebaseLine>, state: RebaseInteractiveViewState): Boolean {
+        if (state is RebaseInteractiveViewState.Loaded) {
+            val stepsList = state.stepsList
+
+            if (rebaseLines.count() != stepsList.count()) {
+                return false
+            }
+
+            return rebaseLines.map { it.commit.name() } == stepsList.map { it.commit.name() }
+        }
+
+        return false
+    }
+
+    fun continueRebaseInteractive() = tabState.safeProcessing(
+        refreshType = RefreshType.ALL_DATA,
+        taskType = TaskType.REBASE_INTERACTIVE, // TODO Perhaps be more precise with the task type
+    ) { git ->
+        resumeRebaseInteractiveUseCase(git, interactiveHandlerContinue)
+        _rebaseState.value = RebaseInteractiveViewState.Loading
     }
 
     fun onCommitMessageChanged(commit: AbbreviatedObjectId, message: String) {
         val rebaseState = _rebaseState.value
 
-        if (rebaseState !is RebaseInteractiveState.Loaded)
+        if (rebaseState !is RebaseInteractiveViewState.Loaded)
             return
 
         val messagesMap = rebaseState.messages.toMutableMap()
@@ -115,10 +142,10 @@ class RebaseInteractiveViewModel @Inject constructor(
         _rebaseState.value = rebaseState.copy(messages = messagesMap)
     }
 
-    fun onCommitActionChanged(commit: AbbreviatedObjectId, action: Action) {
+    fun onCommitActionChanged(commit: AbbreviatedObjectId, rebaseAction: RebaseAction) {
         val rebaseState = _rebaseState.value
 
-        if (rebaseState !is RebaseInteractiveState.Loaded)
+        if (rebaseState !is RebaseInteractiveViewState.Loaded)
             return
 
         val newStepsList =
@@ -130,7 +157,12 @@ class RebaseInteractiveViewModel @Inject constructor(
 
         if (stepIndex >= 0) {
             val step = newStepsList[stepIndex]
-            val newTodoLine = RebaseTodoLine(action, step.commit, step.shortMessage)
+            val newTodoLine = RebaseLine(
+                rebaseAction,
+                step.commit,
+                step.shortMessage
+            )
+
             newStepsList[stepIndex] = newTodoLine
 
             _rebaseState.value = rebaseState.copy(stepsList = newStepsList)
@@ -138,38 +170,84 @@ class RebaseInteractiveViewModel @Inject constructor(
     }
 
     fun cancel() = tabState.runOperation(
-        refreshType = RefreshType.REPO_STATE
+        refreshType = RefreshType.ALL_DATA,
     ) { git ->
-        if (!cancelled && !completed) {
-            abortRebaseUseCase(git)
-
-            cancelled = true
-
-            rebaseInteractiveMutex.unlock()
-        }
+        abortRebaseUseCase(git)
+        _rebaseState.value = RebaseInteractiveViewState.Loading
     }
 
-    fun resumeRebase() = tabState.runOperation(
-        showError = true,
+    fun selectLine(line: RebaseLine) = tabState.safeProcessing(
         refreshType = RefreshType.NONE,
+        taskType = TaskType.ABORT_REBASE, // TODO Perhaps be more precise with the task type
     ) { git ->
-        try {
-            resumeRebaseInteractiveUseCase(git, interactiveHandler)
-            completed = true
-        } catch (ex: Exception) {
-            if (ex is RebaseCancelledException) {
-                println("Rebase cancelled")
-            } else {
-                cancel()
-                throw ex
+        val fullCommit = getCommitFromRebaseLineUseCase(git, line.commit, line.shortMessage)
+        tabState.newSelectedCommit(fullCommit)
+    }
+
+    fun moveCommit(from: Int, to: Int) {
+        val state = _rebaseState.value
+
+        if (state is RebaseInteractiveViewState.Loaded) {
+
+            val newStepsList = state.stepsList.toMutableList().apply {
+                add(to, removeAt(from))
             }
+
+            _rebaseState.value = state.copy(stepsList = newStepsList)
         }
     }
 }
 
 
-sealed interface RebaseInteractiveState {
-    object Loading : RebaseInteractiveState
-    data class Loaded(val stepsList: List<RebaseTodoLine>, val messages: Map<String, String>) : RebaseInteractiveState
-    data class Failed(val error: String) : RebaseInteractiveState
+sealed interface RebaseInteractiveViewState {
+    object Loading : RebaseInteractiveViewState
+    data class Loaded(val stepsList: List<RebaseLine>, val messages: Map<String, String>) : RebaseInteractiveViewState
+    data class Failed(val error: String) : RebaseInteractiveViewState
+}
+
+data class RebaseLine(
+    val rebaseAction: RebaseAction,
+    val commit: AbbreviatedObjectId,
+    val shortMessage: String
+) {
+    fun toRebaseTodoLine(): RebaseTodoLine {
+        return RebaseTodoLine(
+            rebaseAction.toAction(),
+            commit,
+            shortMessage
+        )
+    }
+}
+
+enum class RebaseAction(val displayName: String) {
+    PICK("Pick"),
+    REWORD("Reword"),
+    SQUASH("Squash"),
+    FIXUP("Fixup"),
+    EDIT("Edit"),
+    DROP("Drop"),
+    COMMENT("Comment");
+
+    fun toAction(): Action {
+        return when (this) {
+            PICK -> Action.PICK
+            REWORD -> Action.REWORD
+            SQUASH -> Action.SQUASH
+            FIXUP -> Action.FIXUP
+            EDIT -> Action.EDIT
+            COMMENT -> Action.COMMENT
+            DROP -> throw NotImplementedError("To action should not be called when the RebaseAction is DROP")
+        }
+    }
+}
+
+fun Action.toRebaseAction(): RebaseAction {
+    return when (this) {
+        Action.PICK -> RebaseAction.PICK
+        Action.REWORD -> RebaseAction.REWORD
+        Action.EDIT -> RebaseAction.EDIT
+        Action.SQUASH -> RebaseAction.SQUASH
+        Action.FIXUP -> RebaseAction.FIXUP
+        Action.COMMENT -> RebaseAction.COMMENT
+    }
 }

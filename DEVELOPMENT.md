@@ -1,32 +1,46 @@
 # Developing Gitnuro
 
-## Installing libssh
+## Requirements
 
-Gitnuro depends on libssh being present as an external, native library (using [JNA](https://github.com/java-native-access/jna)).
-While the release GitHub workflow packages it automatically, you'll need to install it manually when developing locally,
-such that it's available on the `$PATH`. See [here](https://www.libssh.org/get-it/) for one-liner installation
-instructions with your OS's package manager, or manually download a binary or compile it from source and place it in the
-main project directory (next to `LICENSE`) or elsewhere on your `$PATH`.
+- **JDK 17 or higher**: You don't need this if you only use the JDK installed by IntelliJ IDEA. If you want to build
+  using the CLI, check this [section](#alternative-setting-up-jdk-for-use-on-cli).
+- **Rust:** Gitnuro is mainly written in Kotlin (JVM) but also uses Rust for some specific tasks. To set up your Rust
+  environment,
+  please read [its documentation](https://www.rust-lang.org/). `cargo` and `rustc` must be available in the path in
+  order to build Gitnuro properly.
+- **Perl:** Perl is required to build openssl (which is required for LibSSH to work).
+- **Packages for Linux ARM64/aarch64**: You need to install the `aarch64-linux-gnu-gcc` package to cross compile the
+  Rust components to ARM from x86_64. You will also need to use `rustup` to add a new
+  target: `rustup target add aarch64-unknown-linux-gnu`
 
 ## Setting up an IDE
 
 If you don't have another preference, the recommendation is to download and install
 [IntelliJ IDEA Community Edition](https://www.jetbrains.com/idea/download/)
-(possibly through the JetBrains Toolbox, if you have it already) as well as the
-[Compose Multiplatform IDE Support](https://plugins.jetbrains.com/plugin/16541-compose-multiplatform-ide-support)
-plugin.
+(possibly through the JetBrains Toolbox, if you have it already). The recommended plugins to improve the DX are:
+
+- [Compose Multiplatform IDE Support](https://plugins.jetbrains.com/plugin/16541-compose-multiplatform-ide-support)
+- [Rust Plugin](https://plugins.jetbrains.com/plugin/8182-rust) (deprecated due
+  to [RustRover IDE](https://blog.jetbrains.com/rust/2023/09/13/introducing-rustrover-a-standalone-rust-ide-by-jetbrains/)
+  but still works).
+
+By default, the JDK used by "IntelliJ IDEA Community Edition (2023.1.3)" is "JetBrains Runtime version 21" which is not
+currently supported by the project.
 
 ## Alternative: Setting up JDK for use on CLI
 
-You don't need this if you only use the JDK installed by IntelliJ IDEA.
+You don't need this if you only use the JDK installed by IntelliJ IDEA and build using the IDE.
 
 Check which Java version this project currently uses (`cat build.gradle.kts | grep JavaLanguageVersion`) and install it.
 For instance on Debian-based systems, you'd run:
+
 ```bash
-sudo apt-get install openjdk-17-jre openjdk-17-jdk libssh-dev
+sudo apt install openjdk-17-jre openjdk-17-jdk
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 ```
-Once it works (e.g. `./gradlew build`), you may want to add that latter line to your `/etc/environment`.
+
+Once it works (e.g. `./gradlew build`). On Linux, you may want to add that latter line to your `/etc/environment` or
+user-specific files such as `.profile` or `.bashrc`.
 
 ## Running the app / unit tests
 

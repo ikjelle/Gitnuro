@@ -19,15 +19,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jetpackduba.gitnuro.AppConstants
-import com.jetpackduba.gitnuro.AppStateManager
-import com.jetpackduba.gitnuro.extensions.*
+import com.jetpackduba.gitnuro.AppIcons
+import com.jetpackduba.gitnuro.extensions.dirName
+import com.jetpackduba.gitnuro.extensions.dirPath
+import com.jetpackduba.gitnuro.extensions.handMouseClickable
+import com.jetpackduba.gitnuro.extensions.handOnHover
+import com.jetpackduba.gitnuro.managers.AppStateManager
 import com.jetpackduba.gitnuro.theme.onBackgroundSecondary
 import com.jetpackduba.gitnuro.theme.textButtonColors
+import com.jetpackduba.gitnuro.ui.components.SecondaryButton
 import com.jetpackduba.gitnuro.ui.dialogs.AppInfoDialog
-import com.jetpackduba.gitnuro.ui.dialogs.CloneDialog
-import com.jetpackduba.gitnuro.updates.Update
 import com.jetpackduba.gitnuro.viewmodels.TabViewModel
 
 
@@ -39,63 +44,99 @@ fun WelcomePage(
 ) {
     val appStateManager = tabViewModel.appStateManager
     var showAdditionalInfo by remember { mutableStateOf(false) }
-    var newUpdate by remember { mutableStateOf<Update?>(null) }
 
-    LaunchedEffect(Unit) {
-        val latestRelease = tabViewModel.latestRelease()
 
-        if (latestRelease != null && latestRelease.appCode > AppConstants.APP_VERSION_CODE) {
-            newUpdate = latestRelease
-        }
-    }
-
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colors.surface),
     ) {
         Row(
             horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.Top,
-            modifier = Modifier.align(BiasAlignment(0f, -0.5f))
+            verticalAlignment = BiasAlignment.Vertical(-0.5f),
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+                .weight(1f),
         ) {
             HomeButtons(
-                newUpdate = newUpdate,
-                tabViewModel = tabViewModel,
+                onOpenRepository = {
+                    val repo = tabViewModel.openDirectoryPicker()
+
+                    if (repo != null) {
+                        tabViewModel.openRepository(repo)
+                    }
+                },
+                onStartRepository = {
+                    val dir = tabViewModel.openDirectoryPicker()
+
+                    if (dir != null) {
+                        tabViewModel.initLocalRepository(dir)
+                    }
+                },
                 onShowCloneView = onShowCloneDialog,
                 onShowAdditionalInfo = { showAdditionalInfo = true },
                 onShowSettings = onShowSettings,
+                onOpenUrlInBrowser = { url -> tabViewModel.openUrlInBrowser(url) }
             )
 
             RecentRepositories(appStateManager, tabViewModel)
+        }
+        Spacer(
+            modifier = Modifier
+                .height(1.dp)
+                .fillMaxWidth()
+                .background(MaterialTheme.colors.primaryVariant.copy(alpha = 0.2f))
+        )
+
+        BottomInfoBar(tabViewModel)
+    }
+
+    if (showAdditionalInfo) {
+        AppInfoDialog(
+            onClose = { showAdditionalInfo = false },
+            onOpenUrlInBrowser = { url -> tabViewModel.openUrlInBrowser(url) }
+        )
+    }
+}
+
+@Composable
+private fun BottomInfoBar(tabViewModel: TabViewModel) {
+    val newUpdate = tabViewModel.hasUpdates.collectAsState().value
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(32.dp)
+            .background(MaterialTheme.colors.surface)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Spacer(Modifier.weight(1f, true))
+
+        if (newUpdate != null) {
+            SecondaryButton(
+                text = "Update ${newUpdate.appVersion} available",
+                onClick = { tabViewModel.openUrlInBrowser(newUpdate.downloadUrl) },
+                backgroundButton = MaterialTheme.colors.primary,
+                modifier = Modifier.padding(end = 16.dp)
+            )
         }
 
         Text(
             "Version ${AppConstants.APP_VERSION}",
             style = MaterialTheme.typography.body2,
             maxLines = 1,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(bottom = 16.dp, end = 16.dp)
-        )
-    }
-
-
-
-    if (showAdditionalInfo) {
-        AppInfoDialog(
-            onClose = { showAdditionalInfo = false },
         )
     }
 }
 
 @Composable
 fun HomeButtons(
-    newUpdate: Update?,
-    tabViewModel: TabViewModel,
+    onOpenRepository: () -> Unit,
+    onStartRepository: () -> Unit,
     onShowCloneView: () -> Unit,
     onShowAdditionalInfo: () -> Unit,
     onShowSettings: () -> Unit,
+    onOpenUrlInBrowser: (String) -> Unit,
 ) {
     Column(
         modifier = Modifier.padding(end = 32.dp),
@@ -110,24 +151,22 @@ fun HomeButtons(
         ButtonTile(
             modifier = Modifier.padding(bottom = 8.dp),
             title = "Open a repository",
-            painter = painterResource("open.svg"),
-            onClick = { openRepositoryDialog(tabViewModel) })
+            painter = painterResource(AppIcons.OPEN),
+            onClick = onOpenRepository
+        )
 
         ButtonTile(
             modifier = Modifier.padding(bottom = 8.dp),
             title = "Clone a repository",
-            painter = painterResource("download.svg"),
+            painter = painterResource(AppIcons.DOWNLOAD),
             onClick = onShowCloneView
         )
 
         ButtonTile(
             modifier = Modifier.padding(bottom = 8.dp),
             title = "Start a local repository",
-            painter = painterResource("open.svg"),
-            onClick = {
-                val dir = openDirectoryDialog()
-                if (dir != null) tabViewModel.initLocalRepository(dir)
-            }
+            painter = painterResource(AppIcons.OPEN),
+            onClick = onStartRepository
         )
 
         Text(
@@ -138,42 +177,31 @@ fun HomeButtons(
 
         IconTextButton(
             title = "Source code",
-            painter = painterResource("code.svg"),
+            painter = painterResource(AppIcons.CODE),
             onClick = {
-                openUrlInBrowser("https://github.com/JetpackDuba/Gitnuro")
+                onOpenUrlInBrowser("https://github.com/JetpackDuba/Gitnuro")
             }
         )
 
         IconTextButton(
             title = "Report a bug",
-            painter = painterResource("bug.svg"),
+            painter = painterResource(AppIcons.BUG),
             onClick = {
-                openUrlInBrowser("https://github.com/JetpackDuba/Gitnuro/issues")
+                onOpenUrlInBrowser("https://github.com/JetpackDuba/Gitnuro/issues")
             }
         )
 
         IconTextButton(
             title = "Additional information",
-            painter = painterResource("info.svg"),
+            painter = painterResource(AppIcons.INFO),
             onClick = onShowAdditionalInfo
         )
 
         IconTextButton(
             title = "Settings",
-            painter = painterResource("settings.svg"),
+            painter = painterResource(AppIcons.SETTINGS),
             onClick = onShowSettings
         )
-
-        if (newUpdate != null) {
-            IconTextButton(
-                title = "New update ${newUpdate.appVersion} available ",
-                painter = painterResource("grade.svg"),
-                iconColor = MaterialTheme.colors.secondary,
-                onClick = {
-                    openUrlInBrowser(newUpdate.downloadUrl)
-                }
-            )
-        }
     }
 }
 
@@ -218,15 +246,22 @@ fun RecentRepositories(appStateManager: AppStateManager, tabViewModel: TabViewMo
                                 text = repoDirName,
                                 style = MaterialTheme.typography.body1,
                                 maxLines = 1,
+                                fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colors.primaryVariant,
-                                modifier = Modifier.padding(8.dp)
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .padding(8.dp)
+                                    .widthIn(max = 600.dp),
                             )
                         }
 
                         Text(
                             text = repoDirPath,
                             style = MaterialTheme.typography.body1,
-                            modifier = Modifier.padding(start = 4.dp),
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .padding(start = 4.dp)
+                                .widthIn(max = 600.dp),
                             maxLines = 1,
                             color = MaterialTheme.colors.onBackgroundSecondary
                         )

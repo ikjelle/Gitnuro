@@ -9,10 +9,13 @@ import kotlinx.coroutines.withContext
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.lib.Ref
+import org.eclipse.jgit.lib.Repository
 import javax.inject.Inject
 
 class GetLogUseCase @Inject constructor() {
-    suspend operator fun invoke(git: Git, currentBranch: Ref?, hasUncommitedChanges: Boolean, commitsLimit: Int) =
+    private var graphWalkCached: GraphWalk? = null
+
+    suspend operator fun invoke(git: Git, currentBranch: Ref?, hasUncommittedChanges: Boolean, commitsLimit: Int) =
         withContext(Dispatchers.IO) {
             val commitList = GraphCommitList()
             val repositoryState = git.repository.repositoryState
@@ -30,9 +33,10 @@ class GetLogUseCase @Inject constructor() {
                     walk.markStartAllRefs(Constants.R_HEADS)
                     walk.markStartAllRefs(Constants.R_REMOTES)
                     walk.markStartAllRefs(Constants.R_TAGS)
+                    walk.markStartAllRefs(Constants.R_STASH)
 
-                    if (hasUncommitedChanges)
-                        commitList.addUncommitedChangesGraphCommit(logList.first())
+                    if (hasUncommittedChanges)
+                        commitList.addUncommittedChangesGraphCommit(logList.first())
 
                     commitList.source(walk)
                     commitList.fillTo(commitsLimit)
@@ -46,4 +50,17 @@ class GetLogUseCase @Inject constructor() {
 
             return@withContext commitList
         }
+
+    private fun cachedGraphWalk(repository: Repository): GraphWalk {
+        val graphWalkCached = this.graphWalkCached
+
+        return if (graphWalkCached != null) {
+            graphWalkCached
+        } else {
+            val newGraphWalk = GraphWalk(repository)
+            this.graphWalkCached = newGraphWalk
+
+            newGraphWalk
+        }
+    }
 }

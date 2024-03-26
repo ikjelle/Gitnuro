@@ -2,18 +2,16 @@
 
 package com.jetpackduba.gitnuro
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.LocalTextContextMenu
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Density
@@ -25,24 +23,32 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.jetpackduba.gitnuro.di.DaggerAppComponent
 import com.jetpackduba.gitnuro.extensions.preferenceValue
-import com.jetpackduba.gitnuro.extensions.systemSeparator
 import com.jetpackduba.gitnuro.extensions.toWindowPlacement
-import com.jetpackduba.gitnuro.logging.printLog
+import com.jetpackduba.gitnuro.git.AppGpgSigner
+import com.jetpackduba.gitnuro.logging.printError
+import com.jetpackduba.gitnuro.managers.AppStateManager
+import com.jetpackduba.gitnuro.managers.TempFilesManager
 import com.jetpackduba.gitnuro.preferences.AppSettings
+import com.jetpackduba.gitnuro.preferences.ProxySettings
+import com.jetpackduba.gitnuro.system.systemSeparator
 import com.jetpackduba.gitnuro.theme.AppTheme
 import com.jetpackduba.gitnuro.theme.Theme
 import com.jetpackduba.gitnuro.theme.onBackgroundSecondary
 import com.jetpackduba.gitnuro.ui.AppTab
+import com.jetpackduba.gitnuro.ui.TabsManager
 import com.jetpackduba.gitnuro.ui.components.RepositoriesTabPanel
 import com.jetpackduba.gitnuro.ui.components.TabInformation
 import com.jetpackduba.gitnuro.ui.components.emptyTabInformation
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.update
+import com.jetpackduba.gitnuro.ui.context_menu.AppPopupMenu
+import com.jetpackduba.gitnuro.ui.dialogs.settings.ProxyType
 import kotlinx.coroutines.launch
+import org.eclipse.jgit.lib.GpgSigner
 import java.io.File
+import java.net.Authenticator
+import java.net.PasswordAuthentication
 import java.nio.file.Paths
 import javax.inject.Inject
+
 
 private const val TAG = "App"
 
@@ -57,17 +63,36 @@ class App {
     @Inject
     lateinit var appSettings: AppSettings
 
+    @Inject
+    lateinit var appGpgSigner: AppGpgSigner
+
+    @Inject
+    lateinit var appEnvInfo: AppEnvInfo
+
+    @Inject
+    lateinit var tabsManager: TabsManager
+
+    @Inject
+    lateinit var tempFilesManager: TempFilesManager
+
+    @Inject
+    lateinit var logging: Logging
+
     init {
         appComponent.inject(this)
     }
 
-    private val tabsFlow = MutableStateFlow<List<TabInformation>>(emptyList())
-
+    @OptIn(ExperimentalFoundationApi::class)
     fun start(args: Array<String>) {
+        tabsManager.appComponent = this.appComponent
+
+        logging.initLogging()
+        initProxySettings()
+
         val windowPlacement = appSettings.windowPlacement.toWindowPlacement
         val dirToOpen = getDirToOpen(args)
-        var defaultSelectedTabKey = 0
 
+        appEnvInfo.isFlatpak = args.contains("--flatpak")
         appStateManager.loadRepositoriesTabs()
 
         try {
@@ -75,14 +100,16 @@ class App {
                 appSettings.loadCustomTheme()
             }
         } catch (ex: Exception) {
-            printLog(TAG, "Failed to load custom theme")
+            printError(TAG, "Failed to load custom theme")
             ex.printStackTrace()
         }
 
-        loadTabs()
+        tabsManager.loadPersistedTabs()
+
+        GpgSigner.setDefault(appGpgSigner)
 
         if (dirToOpen != null)
-            defaultSelectedTabKey = addDirTab(dirToOpen)
+            addDirTab(dirToOpen)
 
         application {
             var isOpen by remember { mutableStateOf(true) }
@@ -100,30 +127,35 @@ class App {
 
             if (isOpen) {
                 Window(
-                    title = AppConstants.APP_NAME,
+                    title = System.getenv("title") ?: AppConstants.APP_NAME,
                     onCloseRequest = {
                         isOpen = false
                     },
                     state = windowState,
-                    icon = painterResource("logo.svg"),
+                    icon = painterResource(AppIcons.LOGO),
                 ) {
-                    val density = if (scale != -1f) {
-                        arrayOf(LocalDensity provides Density(scale, 1f))
-                    } else
-                        emptyArray()
+                    val compositionValues: MutableList<ProvidedValue<*>> =
+                        mutableListOf(LocalTextContextMenu provides AppPopupMenu())
 
-                    CompositionLocalProvider(values = density) {
+                    if (scale != -1f) {
+                        compositionValues.add(LocalDensity provides Density(scale, 1f))
+                    }
+
+                    CompositionLocalProvider(
+                        values = compositionValues.toTypedArray()
+                    ) {
                         AppTheme(
                             selectedTheme = theme,
                             customTheme = customTheme,
                         ) {
                             Box(modifier = Modifier.background(MaterialTheme.colors.background)) {
-                                AppTabs(defaultSelectedTabKey)
+                                AppTabs()
                             }
                         }
                     }
                 }
             } else {
+                tempFilesManager.clearAll()
                 appStateManager.cancelCoroutines()
                 this.exitApplication()
             }
@@ -131,139 +163,134 @@ class App {
         }
     }
 
-    private fun addDirTab(dirToOpen: File): Int {
-        var defaultSelectedTabKey = 0
-
-        tabsFlow.update {
-            val newList = it.toMutableList()
-            val absolutePath = dirToOpen.normalize().absolutePath
-                .removeSuffix(systemSeparator)
-                .removeSuffix("$systemSeparator.git")
-            val newKey = it.count()
-
-            val existingIndex = newList.indexOfFirst { repo -> repo.path?.removeSuffix(systemSeparator) == absolutePath }
-
-            defaultSelectedTabKey = if(existingIndex == -1) {
-                newList.add(newAppTab(key = newKey, path = absolutePath))
-                newKey
-            } else {
-                existingIndex
+    private fun initProxySettings() {
+        appStateManager.appScope.launch {
+            appSettings.proxyFlow.collect { proxySettings ->
+                if (proxySettings.useProxy) {
+                    when (proxySettings.proxyType) {
+                        ProxyType.HTTP -> setHttpProxy(proxySettings)
+                        ProxyType.SOCKS -> setSocksProxy(proxySettings)
+                    }
+                } else {
+                    clearProxySettings()
+                }
             }
-
-            newList
         }
-
-        return defaultSelectedTabKey
     }
 
-    private fun loadTabs() {
-        val repositoriesSavedTabs = appStateManager.openRepositoriesPathsTabs
-        var repoTabs = repositoriesSavedTabs.map { repositoryTab ->
-            newAppTab(
-                key = repositoryTab.key,
-                path = repositoryTab.value
+    private fun clearProxySettings() {
+        System.setProperty("http.proxyHost", "")
+        System.setProperty("http.proxyPort", "")
+        System.setProperty("https.proxyHost", "")
+        System.setProperty("https.proxyPort", "")
+        System.setProperty("socksProxyHost", "")
+        System.setProperty("socksProxyPort", "")
+    }
+
+    private fun setHttpProxy(proxySettings: ProxySettings) {
+        System.setProperty("http.proxyHost", proxySettings.hostName)
+        System.setProperty("http.proxyPort", proxySettings.hostPort.toString())
+        System.setProperty("https.proxyHost", proxySettings.hostName)
+        System.setProperty("https.proxyPort", proxySettings.hostPort.toString())
+
+        if (proxySettings.useAuth) {
+            Authenticator.setDefault(
+                object : Authenticator() {
+                    public override fun getPasswordAuthentication(): PasswordAuthentication {
+                        return PasswordAuthentication(proxySettings.hostUser, proxySettings.hostPassword.toCharArray())
+                    }
+                }
             )
-        }
 
-        if (repoTabs.isEmpty()) {
-            repoTabs = listOf(
-                newAppTab()
+            System.setProperty("http.proxyUser", proxySettings.hostUser)
+            System.setProperty("http.proxyPassword", proxySettings.hostPassword)
+            System.setProperty("https.proxyUser", proxySettings.hostUser)
+            System.setProperty("https.proxyPassword", proxySettings.hostPassword)
+            System.setProperty("jdk.http.auth.tunneling.disabledSchemes", "")
+        }
+    }
+
+    private fun setSocksProxy(proxySettings: ProxySettings) {
+        System.setProperty("socksProxyHost", proxySettings.hostName)
+        System.setProperty("socksProxyPort", proxySettings.hostPort.toString())
+
+        if (proxySettings.useAuth) {
+            Authenticator.setDefault(
+                object : Authenticator() {
+                    public override fun getPasswordAuthentication(): PasswordAuthentication {
+                        return PasswordAuthentication(proxySettings.hostUser, proxySettings.hostPassword.toCharArray())
+                    }
+                }
             )
+
+            System.setProperty("java.net.socks.username", proxySettings.hostUser)
+            System.setProperty("java.net.socks.password", proxySettings.hostPassword)
         }
+    }
 
-        tabsFlow.value = repoTabs
+    private fun addDirTab(dirToOpen: File) {
+        val absolutePath = dirToOpen.normalize().absolutePath
+            .removeSuffix(systemSeparator)
+            .removeSuffix("$systemSeparator.git")
 
-        println("After reading prefs, got ${tabsFlow.value.count()} tabs")
+        tabsManager.addNewTabFromPath(absolutePath, true)
     }
 
 
     @Composable
-    fun AppTabs(defaultSelectedTabKey: Int) {
-        val tabs by tabsFlow.collectAsState()
-        val tabsInformationList = tabs.sortedBy { it.key }
-        val selectedTabKey = remember { mutableStateOf(defaultSelectedTabKey) }
+    fun AppTabs() {
+        val tabs by tabsManager.tabsFlow.collectAsState()
+        val currentTab = tabsManager.currentTab.collectAsState().value
 
-        Column(
-            modifier = Modifier.background(MaterialTheme.colors.background)
-        ) {
-            Tabs(
-                tabsInformationList = tabsInformationList,
-                selectedTabKey = selectedTabKey,
-                onAddedTab = { tabInfo ->
-                    addTab(tabInfo)
-                },
-                onRemoveTab = { key ->
-                    removeTab(key)
-                }
-            )
+        if (currentTab != null) {
+            Column(
+                modifier = Modifier.background(MaterialTheme.colors.background)
+            ) {
+                Tabs(
+                    tabsInformationList = tabs,
+                    currentTab = currentTab,
+                    onAddedTab = {
+                        tabsManager.addNewEmptyTab()
+                    },
+                    onCloseTab = { tab ->
+                        tabsManager.closeTab(tab)
+                    }
+                )
 
-            TabsContent(tabsInformationList, selectedTabKey.value)
+                TabContent(currentTab)
+            }
         }
-    }
-
-    private fun removeTab(key: Int) = appStateManager.appScope.launch(Dispatchers.IO) {
-        // Stop any running jobs
-        val tabs = tabsFlow.value
-        val tabToRemove = tabs.firstOrNull { it.key == key } ?: return@launch
-        tabToRemove.tabViewModel.dispose()
-
-        // Remove tab from persistent tabs storage
-        appStateManager.repositoryTabRemoved(key)
-
-        // Remove from tabs flow
-        tabsFlow.value = tabsFlow.value.filter { tab -> tab.key != key }
-    }
-
-    fun addTab(tabInformation: TabInformation) = appStateManager.appScope.launch(Dispatchers.IO) {
-        tabsFlow.value = tabsFlow.value.toMutableList().apply { add(tabInformation) }
     }
 
     @Composable
     fun Tabs(
-        selectedTabKey: MutableState<Int>,
         tabsInformationList: List<TabInformation>,
-        onAddedTab: (TabInformation) -> Unit,
-        onRemoveTab: (Int) -> Unit,
+        currentTab: TabInformation?,
+        onAddedTab: () -> Unit,
+        onCloseTab: (TabInformation) -> Unit,
     ) {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(40.dp),
+                .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             RepositoriesTabPanel(
                 tabs = tabsInformationList,
-                selectedTabKey = selectedTabKey.value,
-                onTabSelected = { newSelectedTabKey ->
-                    selectedTabKey.value = newSelectedTabKey
+                currentTab = currentTab,
+                onTabSelected = { selectedTab ->
+                    tabsManager.selectTab(selectedTab)
                 },
-                onTabClosed = onRemoveTab
-            ) { key ->
-                val newAppTab = newAppTab(
-                    key = key
-                )
-
-                onAddedTab(newAppTab)
-                newAppTab
-            }
+                onTabClosed = onCloseTab,
+                onAddNewTab = onAddedTab,
+                tabsHeight = 40.dp,
+                onMoveTab = { fromIndex, toIndex ->
+                    tabsManager.onMoveTab(fromIndex, toIndex)
+                },
+            )
         }
     }
 
-    private fun newAppTab(
-        key: Int = 0,
-        tabName: MutableState<String> = mutableStateOf("New tab"),
-        path: String? = null,
-    ): TabInformation {
-
-        return TabInformation(
-            tabName = tabName,
-            key = key,
-            path = path,
-            appComponent = appComponent,
-        )
-    }
-
-    fun getDirToOpen(args: Array<String>): File? {
+    private fun getDirToOpen(args: Array<String>): File? {
         if (args.isNotEmpty()) {
             val repoToOpen = args.first()
             val path = Paths.get(repoToOpen)
@@ -284,20 +311,17 @@ class App {
 }
 
 @Composable
-private fun TabsContent(tabs: List<TabInformation>, selectedTabKey: Int) {
-    val selectedTab = tabs.firstOrNull { it.key == selectedTabKey }
-
+private fun TabContent(currentTab: TabInformation?) {
     Box(
         modifier = Modifier
             .background(MaterialTheme.colors.background)
             .fillMaxSize(),
     ) {
-        if (selectedTab != null) {
-            val density = arrayOf(LocalTabScope provides selectedTab)
+        if (currentTab != null) {
+            val tabScope = arrayOf(LocalTabScope provides currentTab)
 
-
-            CompositionLocalProvider(values = density) {
-                AppTab(selectedTab.tabViewModel)
+            CompositionLocalProvider(values = tabScope) {
+                AppTab(currentTab.tabViewModel)
             }
         }
     }
@@ -314,13 +338,5 @@ fun LoadingRepository(repoPath: String) {
             Text("Opening repository", fontSize = 36.sp, color = MaterialTheme.colors.onBackground)
             Text(repoPath, fontSize = 24.sp, color = MaterialTheme.colors.onBackgroundSecondary)
         }
-    }
-}
-
-object AboutIcon : Painter() {
-    override val intrinsicSize = Size(256f, 256f)
-
-    override fun DrawScope.onDraw() {
-        drawOval(Color(0xFFFFA500))
     }
 }

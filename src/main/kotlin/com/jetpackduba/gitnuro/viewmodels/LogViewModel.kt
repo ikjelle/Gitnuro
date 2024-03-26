@@ -2,21 +2,21 @@ package com.jetpackduba.gitnuro.viewmodels
 
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.lazy.LazyListState
+import com.jetpackduba.gitnuro.TaskType
 import com.jetpackduba.gitnuro.extensions.delayedStateChange
+import com.jetpackduba.gitnuro.extensions.shortName
 import com.jetpackduba.gitnuro.git.RefreshType
 import com.jetpackduba.gitnuro.git.TabState
 import com.jetpackduba.gitnuro.git.TaskEvent
-import com.jetpackduba.gitnuro.git.branches.*
+import com.jetpackduba.gitnuro.git.branches.CreateBranchOnCommitUseCase
+import com.jetpackduba.gitnuro.git.branches.GetCurrentBranchUseCase
 import com.jetpackduba.gitnuro.git.graph.GraphCommitList
 import com.jetpackduba.gitnuro.git.graph.GraphNode
 import com.jetpackduba.gitnuro.git.log.*
-import com.jetpackduba.gitnuro.git.rebase.RebaseBranchUseCase
-import com.jetpackduba.gitnuro.git.remote_operations.DeleteRemoteBranchUseCase
-import com.jetpackduba.gitnuro.git.remote_operations.PullFromSpecificBranchUseCase
-import com.jetpackduba.gitnuro.git.remote_operations.PushToSpecificBranchUseCase
+import com.jetpackduba.gitnuro.git.rebase.StartRebaseInteractiveUseCase
 import com.jetpackduba.gitnuro.git.tags.CreateTagOnCommitUseCase
 import com.jetpackduba.gitnuro.git.tags.DeleteTagUseCase
-import com.jetpackduba.gitnuro.git.workspace.CheckHasUncommitedChangedUseCase
+import com.jetpackduba.gitnuro.git.workspace.CheckHasUncommittedChangesUseCase
 import com.jetpackduba.gitnuro.git.workspace.GetStatusSummaryUseCase
 import com.jetpackduba.gitnuro.git.workspace.StatusSummary
 import com.jetpackduba.gitnuro.preferences.AppSettings
@@ -47,26 +47,27 @@ private const val LOG_MIN_TIME_IN_MS_TO_SHOW_LOAD = 500L
 class LogViewModel @Inject constructor(
     private val getLogUseCase: GetLogUseCase,
     private val getStatusSummaryUseCase: GetStatusSummaryUseCase,
-    private val checkHasUncommitedChangedUseCase: CheckHasUncommitedChangedUseCase,
+    private val checkHasUncommittedChangesUseCase: CheckHasUncommittedChangesUseCase,
     private val getCurrentBranchUseCase: GetCurrentBranchUseCase,
-    private val checkoutRefUseCase: CheckoutRefUseCase,
     private val createBranchOnCommitUseCase: CreateBranchOnCommitUseCase,
-    private val deleteBranchUseCase: DeleteBranchUseCase,
-    private val pushToSpecificBranchUseCase: PushToSpecificBranchUseCase,
-    private val pullFromSpecificBranchUseCase: PullFromSpecificBranchUseCase,
-    private val deleteRemoteBranchUseCase: DeleteRemoteBranchUseCase,
     private val checkoutCommitUseCase: CheckoutCommitUseCase,
     private val revertCommitUseCase: RevertCommitUseCase,
     private val resetToCommitUseCase: ResetToCommitUseCase,
     private val cherryPickCommitUseCase: CherryPickCommitUseCase,
-    private val mergeBranchUseCase: MergeBranchUseCase,
     private val createTagOnCommitUseCase: CreateTagOnCommitUseCase,
-    private val deleteTagUseCase: DeleteTagUseCase,
-    private val rebaseBranchUseCase: RebaseBranchUseCase,
+    private val startRebaseInteractiveUseCase: StartRebaseInteractiveUseCase,
     private val tabState: TabState,
     private val appSettings: AppSettings,
-    private val tabScope: CoroutineScope,
-) : ViewModel {
+    tabScope: CoroutineScope,
+    sharedStashViewModel: SharedStashViewModel,
+    sharedBranchesViewModel: SharedBranchesViewModel,
+    sharedRemotesViewModel: SharedRemotesViewModel,
+    sharedTagsViewModel: SharedTagsViewModel,
+) : ViewModel,
+    ISharedStashViewModel by sharedStashViewModel,
+    ISharedBranchesViewModel by sharedBranchesViewModel,
+    ISharedRemotesViewModel by sharedRemotesViewModel,
+    ISharedTagsViewModel by sharedTagsViewModel {
     private val _logStatus = MutableStateFlow<LogStatus>(LogStatus.Loading)
 
     val logStatus: StateFlow<LogStatus>
@@ -81,7 +82,7 @@ class LogViewModel @Inject constructor(
         .filterIsInstance<SelectedItem.CommitBasedItem>()
         .map { it.revCommit }
 
-    val scrollToUncommitedChanges: Flow<SelectedItem.UncommitedChanges> = tabState.taskEvent
+    val scrollToUncommittedChanges: Flow<SelectedItem.UncommittedChanges> = tabState.taskEvent
         .filterIsInstance<TaskEvent.ScrollToGraphItem>()
         .map { it.selectedItem }
         .filterIsInstance()
@@ -94,7 +95,6 @@ class LogViewModel @Inject constructor(
 
     val verticalListState = MutableStateFlow(LazyListState(0, 0))
     val horizontalListState = MutableStateFlow(ScrollState(0))
-
 
     private val _logSearchFilterResults = MutableStateFlow<LogSearch>(LogSearch.NotSearching)
     val logSearchFilterResults: StateFlow<LogSearch> = _logSearchFilterResults
@@ -115,11 +115,11 @@ class LogViewModel @Inject constructor(
             tabState.refreshFlowFiltered(
                 RefreshType.ALL_DATA,
                 RefreshType.ONLY_LOG,
-                RefreshType.UNCOMMITED_CHANGES,
-                RefreshType.UNCOMMITED_CHANGES_AND_LOG,
+                RefreshType.UNCOMMITTED_CHANGES,
+                RefreshType.UNCOMMITTED_CHANGES_AND_LOG,
             ) { refreshType ->
-                if (refreshType == RefreshType.UNCOMMITED_CHANGES) {
-                    uncommitedChangesLoadLog(tabState.git)
+                if (refreshType == RefreshType.UNCOMMITTED_CHANGES) {
+                    uncommittedChangesLoadLog(tabState.git)
                 } else
                     refresh(tabState.git)
             }
@@ -139,7 +139,7 @@ class LogViewModel @Inject constructor(
             git = git,
         )
 
-        val hasUncommitedChanges = statusSummary.total > 0
+        val hasUncommittedChanges = statusSummary.total > 0
         val commitsLimit = if (appSettings.commitsLimitEnabled) {
             appSettings.commitsLimit
         } else
@@ -150,108 +150,76 @@ class LogViewModel @Inject constructor(
         } else
             -1
 
-        val log = getLogUseCase(git, currentBranch, hasUncommitedChanges, commitsLimit)
+        val log = getLogUseCase(git, currentBranch, hasUncommittedChanges, commitsLimit)
 
         _logStatus.value =
-            LogStatus.Loaded(hasUncommitedChanges, log, currentBranch, statusSummary, commitsLimitDisplayed)
+            LogStatus.Loaded(hasUncommittedChanges, log, currentBranch, statusSummary, commitsLimitDisplayed)
 
         // Remove search filter if the log has been updated
         _logSearchFilterResults.value = LogSearch.NotSearching
     }
 
-
-    fun pushToRemoteBranch(branch: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        pushToSpecificBranchUseCase(
-            git = git,
-            force = false,
-            pushTags = false,
-            remoteBranch = branch,
-        )
-    }
-
-    fun pullFromRemoteBranch(branch: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        pullFromSpecificBranchUseCase(
-            git = git,
-            rebase = false,
-            remoteBranch = branch,
-        )
-    }
-
     fun checkoutCommit(revCommit: RevCommit) = tabState.safeProcessing(
         refreshType = RefreshType.ALL_DATA,
+        title = "Commit checkout",
+        subtitle = "Checking out commit ${revCommit.name}",
+        taskType = TaskType.CHECKOUT_COMMIT,
     ) { git ->
         checkoutCommitUseCase(git, revCommit)
     }
 
     fun revertCommit(revCommit: RevCommit) = tabState.safeProcessing(
         refreshType = RefreshType.ALL_DATA,
+        title = "Commit revert",
+        subtitle = "Reverting commit ${revCommit.name}",
         refreshEvenIfCrashes = true,
+        taskType = TaskType.REVERT_COMMIT,
     ) { git ->
         revertCommitUseCase(git, revCommit)
     }
 
     fun resetToCommit(revCommit: RevCommit, resetType: ResetType) = tabState.safeProcessing(
         refreshType = RefreshType.ALL_DATA,
+        title = "Branch reset",
+        subtitle = "Reseting branch to commit ${revCommit.shortName}",
+        taskType = TaskType.RESET_TO_COMMIT,
     ) { git ->
         resetToCommitUseCase(git, revCommit, resetType = resetType)
     }
 
-    fun checkoutRef(ref: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        checkoutRefUseCase(git, ref)
-    }
-
     fun cherrypickCommit(revCommit: RevCommit) = tabState.safeProcessing(
-        refreshType = RefreshType.UNCOMMITED_CHANGES_AND_LOG,
+        refreshType = RefreshType.UNCOMMITTED_CHANGES_AND_LOG,
+        title = "Cherry-pick",
+        subtitle = "Cherry-picking commit ${revCommit.shortName}",
+        taskType = TaskType.CHERRY_PICK_COMMIT,
     ) { git ->
         cherryPickCommitUseCase(git, revCommit)
     }
 
     fun createBranchOnCommit(branch: String, revCommit: RevCommit) = tabState.safeProcessing(
         refreshType = RefreshType.ALL_DATA,
+        title = "New branch",
+        subtitle = "Creating new branch \"$branch\" on commit ${revCommit.shortName}",
         refreshEvenIfCrashesInteractive = { it is CheckoutConflictException },
+        taskType = TaskType.CREATE_BRANCH,
     ) { git ->
         createBranchOnCommitUseCase(git, branch, revCommit)
     }
 
     fun createTagOnCommit(tag: String, revCommit: RevCommit) = tabState.safeProcessing(
         refreshType = RefreshType.ALL_DATA,
+        title = "New tag",
+        subtitle = "Creating new tag \"$tag\" on commit ${revCommit.shortName}",
+        taskType = TaskType.CREATE_TAG,
     ) { git ->
         createTagOnCommitUseCase(git, tag, revCommit)
     }
 
-    fun mergeBranch(ref: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        mergeBranchUseCase(git, ref, appSettings.ffMerge)
-    }
-
-    fun deleteBranch(branch: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        deleteBranchUseCase(git, branch)
-    }
-
-    fun deleteTag(tag: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        deleteTagUseCase(git, tag)
-    }
-
-    suspend fun refreshUncommitedChanges(git: Git) {
-        uncommitedChangesLoadLog(git)
-    }
-
-    private suspend fun uncommitedChangesLoadLog(git: Git) {
+    private suspend fun uncommittedChangesLoadLog(git: Git) {
         val currentBranch = getCurrentBranchUseCase(git)
-        val hasUncommitedChanges = checkHasUncommitedChangedUseCase(git)
+        val hasUncommittedChanges = checkHasUncommittedChangesUseCase(git)
 
-        val statsSummary = if (hasUncommitedChanges) {
+        val statsSummary = if (hasUncommittedChanges) {
             getStatusSummaryUseCase(
                 git = git,
             )
@@ -262,7 +230,7 @@ class LogViewModel @Inject constructor(
 
         if (previousLogStatusValue is LogStatus.Loaded) {
             val newLogStatusValue = LogStatus.Loaded(
-                hasUncommitedChanges = hasUncommitedChanges,
+                hasUncommittedChanges = hasUncommittedChanges,
                 plotCommitList = previousLogStatusValue.plotCommitList,
                 currentBranch = currentBranch,
                 statusSummary = statsSummary,
@@ -277,16 +245,10 @@ class LogViewModel @Inject constructor(
         loadLog(git)
     }
 
-    fun rebaseBranch(ref: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        rebaseBranchUseCase(git, ref)
-    }
-
-    fun selectUncommitedChanges() = tabState.runOperation(
+    fun selectUncommittedChanges() = tabState.runOperation(
         refreshType = RefreshType.NONE,
     ) {
-        tabState.newSelectedItem(SelectedItem.UncommitedChanges)
+        tabState.newSelectedItem(SelectedItem.UncommittedChanges)
 
         val searchValue = _logSearchFilterResults.value
         if (searchValue is LogSearch.SearchResults) {
@@ -308,7 +270,7 @@ class LogViewModel @Inject constructor(
     fun selectLogLine(commit: GraphNode) = tabState.runOperation(
         refreshType = RefreshType.NONE,
     ) {
-        tabState.newSelectedItem(SelectedItem.Commit(commit))
+        tabState.newSelectedCommit(commit)
 
         val searchValue = _logSearchFilterResults.value
         if (searchValue is LogSearch.SearchResults) {
@@ -404,35 +366,30 @@ class LogViewModel @Inject constructor(
         _logSearchFilterResults.value = LogSearch.NotSearching
     }
 
-    fun rebaseInteractive(revCommit: RevCommit) = tabState.runOperation(
-        refreshType = RefreshType.NONE
-    ) {
-        tabState.emitNewTaskEvent(TaskEvent.RebaseInteractive(revCommit))
-    }
-
-    fun deleteRemoteBranch(branch: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
+    fun rebaseInteractive(revCommit: RevCommit) = tabState.safeProcessing(
+        refreshType = RefreshType.REBASE_INTERACTIVE_STATE,
+        taskType = TaskType.REBASE_INTERACTIVE,
     ) { git ->
-        deleteRemoteBranchUseCase(git, branch)
+        startRebaseInteractiveUseCase(git, revCommit)
     }
 }
 
-sealed class LogStatus {
-    object Loading : LogStatus()
+sealed interface LogStatus {
+    data object Loading : LogStatus
     class Loaded(
-        val hasUncommitedChanges: Boolean,
+        val hasUncommittedChanges: Boolean,
         val plotCommitList: GraphCommitList,
         val currentBranch: Ref?,
         val statusSummary: StatusSummary,
         val commitsLimit: Int,
-    ) : LogStatus()
+    ) : LogStatus
 }
 
-sealed class LogSearch {
-    object NotSearching : LogSearch()
+sealed interface LogSearch {
+    data object NotSearching : LogSearch
     data class SearchResults(
         val commits: List<GraphNode>,
         val index: Int,
         val totalCount: Int = commits.count(),
-    ) : LogSearch()
+    ) : LogSearch
 }

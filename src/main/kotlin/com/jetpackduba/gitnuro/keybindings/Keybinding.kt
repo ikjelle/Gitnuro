@@ -4,8 +4,8 @@ package com.jetpackduba.gitnuro.keybindings
 
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.input.key.*
-import com.jetpackduba.gitnuro.extensions.OS
-import com.jetpackduba.gitnuro.extensions.getCurrentOs
+import com.jetpackduba.gitnuro.system.OS
+import com.jetpackduba.gitnuro.system.currentOs
 
 data class Keybinding(
     val alt: Boolean = false,
@@ -85,7 +85,7 @@ private fun macKeybindings(): Map<KeybindingOption, List<Keybinding>> {
 }
 
 val keybindings by lazy {
-    return@lazy when (getCurrentOs()) {
+    return@lazy when (currentOs) {
         OS.LINUX -> linuxKeybindings()
         OS.WINDOWS -> windowsKeybindings()
         OS.MAC -> macKeybindings()
@@ -104,5 +104,5 @@ fun KeyEvent.matchesBinding(keybindingOption: KeybindingOption): Boolean {
                 keybinding.meta == this.isMetaPressed &&
                 keybinding.shift == this.isShiftPressed &&
                 keybinding.key == this.key
-    }
+    } && this.type == KeyEventType.KeyDown
 }

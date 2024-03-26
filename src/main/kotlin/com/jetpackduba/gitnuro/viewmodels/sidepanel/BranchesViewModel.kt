@@ -9,6 +9,8 @@ import com.jetpackduba.gitnuro.git.rebase.RebaseBranchUseCase
 import com.jetpackduba.gitnuro.git.remote_operations.PullFromSpecificBranchUseCase
 import com.jetpackduba.gitnuro.git.remote_operations.PushToSpecificBranchUseCase
 import com.jetpackduba.gitnuro.preferences.AppSettings
+import com.jetpackduba.gitnuro.viewmodels.ISharedBranchesViewModel
+import com.jetpackduba.gitnuro.viewmodels.SharedBranchesViewModel
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CoroutineScope
@@ -16,47 +18,38 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.Ref
-import javax.inject.Inject
 
 private const val TAG = "BranchesViewModel"
 
 
 class BranchesViewModel @AssistedInject constructor(
-    private val rebaseBranchUseCase: RebaseBranchUseCase,
     private val tabState: TabState,
-    private val appSettings: AppSettings,
-    private val pushToSpecificBranchUseCase: PushToSpecificBranchUseCase,
-    private val pullFromSpecificBranchUseCase: PullFromSpecificBranchUseCase,
     private val getCurrentBranchUseCase: GetCurrentBranchUseCase,
-    private val mergeBranchUseCase: MergeBranchUseCase,
     private val getBranchesUseCase: GetBranchesUseCase,
-    private val createBranchUseCase: CreateBranchUseCase,
-    private val deleteBranchUseCase: DeleteBranchUseCase,
-    private val checkoutRefUseCase: CheckoutRefUseCase,
-    private val tabScope: CoroutineScope,
+    tabScope: CoroutineScope,
+    sharedBranchesViewModel: SharedBranchesViewModel,
     @Assisted
     private val filter: StateFlow<String>
-) : SidePanelChildViewModel(true) {
+) : SidePanelChildViewModel(true), ISharedBranchesViewModel by sharedBranchesViewModel {
     private val _branches = MutableStateFlow<List<Ref>>(listOf())
     private val _currentBranch = MutableStateFlow<Ref?>(null)
 
-    val branchesState = combine(_branches, _currentBranch, isExpanded, filter) { branches, currentBranch, isExpanded, filter ->
-        BranchesState(
-            branches = branches.filter { it.simpleName.lowercaseContains(filter) },
-            isExpanded = isExpanded,
-            currentBranch = currentBranch
+    val branchesState =
+        combine(_branches, _currentBranch, isExpanded, filter) { branches, currentBranch, isExpanded, filter ->
+            BranchesState(
+                branches = branches.filter { it.simpleName.lowercaseContains(filter) },
+                isExpanded = isExpanded,
+                currentBranch = currentBranch
+            )
+        }.stateIn(
+            scope = tabScope,
+            started = SharingStarted.Eagerly,
+            initialValue = BranchesState(emptyList(), isExpanded.value, null)
         )
-    }.stateIn(
-        scope = tabScope,
-        started = SharingStarted.Eagerly,
-        initialValue = BranchesState(emptyList(), isExpanded.value, null)
-    )
 
     init {
-
         tabScope.launch {
-            tabState.refreshFlowFiltered(RefreshType.ALL_DATA)
-            {
+            tabState.refreshFlowFiltered(RefreshType.ALL_DATA) {
                 refresh(tabState.git)
             }
         }
@@ -77,58 +70,12 @@ class BranchesViewModel @AssistedInject constructor(
         _branches.value = branchesList
     }
 
-
-    fun mergeBranch(ref: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        mergeBranchUseCase(git, ref, appSettings.ffMerge)
-    }
-
-    fun deleteBranch(branch: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        deleteBranchUseCase(git, branch)
-    }
-
-    fun checkoutRef(ref: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        checkoutRefUseCase(git, ref)
-    }
-
     suspend fun refresh(git: Git) {
         loadBranches(git)
     }
 
-    fun rebaseBranch(ref: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        rebaseBranchUseCase(git, ref)
-    }
-
     fun selectBranch(ref: Ref) {
-        tabState.newSelectedRef(ref.objectId)
-    }
-
-    fun pushToRemoteBranch(branch: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        pushToSpecificBranchUseCase(
-            git = git,
-            force = false,
-            pushTags = false,
-            remoteBranch = branch,
-        )
-    }
-
-    fun pullFromRemoteBranch(branch: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        pullFromSpecificBranchUseCase(
-            git = git,
-            rebase = false,
-            remoteBranch = branch,
-        )
+        tabState.newSelectedRef(ref, ref.objectId)
     }
 }
 

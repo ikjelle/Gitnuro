@@ -1,15 +1,22 @@
 package com.jetpackduba.gitnuro.viewmodels.sidepanel
 
+import com.jetpackduba.gitnuro.TaskType
 import com.jetpackduba.gitnuro.exceptions.InvalidRemoteUrlException
 import com.jetpackduba.gitnuro.extensions.lowercaseContains
 import com.jetpackduba.gitnuro.extensions.simpleName
 import com.jetpackduba.gitnuro.git.RefreshType
 import com.jetpackduba.gitnuro.git.TabState
+import com.jetpackduba.gitnuro.git.branches.CheckoutRefUseCase
 import com.jetpackduba.gitnuro.git.branches.DeleteLocallyRemoteBranchesUseCase
+import com.jetpackduba.gitnuro.git.branches.GetCurrentBranchUseCase
 import com.jetpackduba.gitnuro.git.branches.GetRemoteBranchesUseCase
 import com.jetpackduba.gitnuro.git.remote_operations.DeleteRemoteBranchUseCase
+import com.jetpackduba.gitnuro.git.remote_operations.PullFromSpecificBranchUseCase
+import com.jetpackduba.gitnuro.git.remote_operations.PushToSpecificBranchUseCase
 import com.jetpackduba.gitnuro.git.remotes.*
 import com.jetpackduba.gitnuro.ui.dialogs.RemoteWrapper
+import com.jetpackduba.gitnuro.viewmodels.ISharedRemotesViewModel
+import com.jetpackduba.gitnuro.viewmodels.SharedRemotesViewModel
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CoroutineScope
@@ -23,41 +30,45 @@ import org.eclipse.jgit.lib.Ref
 
 class RemotesViewModel @AssistedInject constructor(
     private val tabState: TabState,
-    private val deleteRemoteBranchUseCase: DeleteRemoteBranchUseCase,
     private val getRemoteBranchesUseCase: GetRemoteBranchesUseCase,
     private val getRemotesUseCase: GetRemotesUseCase,
+    private val getCurrentBranchUseCase: GetCurrentBranchUseCase,
     private val deleteRemoteUseCase: DeleteRemoteUseCase,
     private val addRemoteUseCase: AddRemoteUseCase,
     private val updateRemoteUseCase: UpdateRemoteUseCase,
     private val deleteLocallyRemoteBranchesUseCase: DeleteLocallyRemoteBranchesUseCase,
-    private val tabScope: CoroutineScope,
+    tabScope: CoroutineScope,
+    sharedRemotesViewModel: SharedRemotesViewModel,
     @Assisted
     private val filter: StateFlow<String>
-) : SidePanelChildViewModel(false) {
+) : SidePanelChildViewModel(false), ISharedRemotesViewModel by sharedRemotesViewModel {
     private val remotes = MutableStateFlow<List<RemoteView>>(listOf())
+    private val currentBranch = MutableStateFlow<Ref?>(null)
 
-    val remoteState: StateFlow<RemotesState> = combine(remotes, isExpanded, filter) { remotes, isExpanded, filter ->
-        val remotesFiltered = remotes.map { remote ->
-            val remoteInfo = remote.remoteInfo
+    val remoteState: StateFlow<RemotesState> =
+        combine(remotes, isExpanded, filter, currentBranch) { remotes, isExpanded, filter, currentBranch ->
+            val remotesFiltered = remotes.map { remote ->
+                val remoteInfo = remote.remoteInfo
 
-            val newRemoteInfo = remoteInfo.copy(
-                branchesList = remoteInfo.branchesList.filter { branch ->
-                    branch.simpleName.lowercaseContains(filter)
-                }
+                val newRemoteInfo = remoteInfo.copy(
+                    branchesList = remoteInfo.branchesList.filter { branch ->
+                        branch.simpleName.lowercaseContains(filter)
+                    }
+                )
+
+                remote.copy(remoteInfo = newRemoteInfo)
+            }
+
+            RemotesState(
+                remotesFiltered,
+                isExpanded,
+                currentBranch
             )
-
-            remote.copy(remoteInfo = newRemoteInfo)
-        }
-
-        RemotesState(
-            remotesFiltered,
-            isExpanded
+        }.stateIn(
+            scope = tabScope,
+            started = SharingStarted.Eagerly,
+            initialValue = RemotesState(emptyList(), isExpanded.value, null)
         )
-    }.stateIn(
-        scope = tabScope,
-        started = SharingStarted.Eagerly,
-        initialValue = RemotesState(emptyList(), isExpanded.value)
-    )
 
     init {
         tabScope.launch {
@@ -68,30 +79,17 @@ class RemotesViewModel @AssistedInject constructor(
     }
 
     private suspend fun loadRemotes(git: Git) = withContext(Dispatchers.IO) {
-        val remotes = git.remoteList()
-            .call()
         val allRemoteBranches = getRemoteBranchesUseCase(git)
 
-        getRemotesUseCase(git, allRemoteBranches)
-
-        val remoteInfoList = remotes.map { remoteConfig ->
-            val remoteBranches = allRemoteBranches.filter { branch ->
-                branch.name.startsWith("refs/remotes/${remoteConfig.name}")
-            }
-            RemoteInfo(remoteConfig, remoteBranches)
-        }
+        val remoteInfoList = getRemotesUseCase(git, allRemoteBranches)
+        val currentBranch = getCurrentBranchUseCase(git)
 
         val remoteViewList = remoteInfoList.map { remoteInfo ->
             RemoteView(remoteInfo, true)
         }
 
         this@RemotesViewModel.remotes.value = remoteViewList
-    }
-
-    fun deleteRemoteBranch(ref: Ref) = tabState.safeProcessing(
-        refreshType = RefreshType.ALL_DATA,
-    ) { git ->
-        deleteRemoteBranchUseCase(git, ref)
+        this@RemotesViewModel.currentBranch.value = currentBranch
     }
 
     suspend fun refresh(git: Git) = withContext(Dispatchers.IO) {
@@ -103,7 +101,7 @@ class RemotesViewModel @AssistedInject constructor(
         val remotes = this.remotes.value
         val remoteInfo = remotes.firstOrNull { it.remoteInfo.remoteConfig.name == remoteName }
 
-        if(remoteInfo != null) {
+        if (remoteInfo != null) {
             val newRemoteInfo = remoteInfo.copy(isExpanded = !remoteClicked.isExpanded)
             val newRemotesList = remotes.toMutableList()
             val indexToReplace = newRemotesList.indexOf(remoteInfo)
@@ -114,12 +112,12 @@ class RemotesViewModel @AssistedInject constructor(
     }
 
     fun selectBranch(ref: Ref) {
-        tabState.newSelectedRef(ref.objectId)
+        tabState.newSelectedRef(ref, ref.objectId)
     }
 
     fun deleteRemote(remoteName: String, isNew: Boolean) = tabState.safeProcessing(
         refreshType = if (isNew) RefreshType.REMOTES else RefreshType.ALL_DATA,
-        showError = true,
+        taskType = TaskType.DELETE_REMOTE,
     ) { git ->
         deleteRemoteUseCase(git, remoteName)
 
@@ -182,4 +180,4 @@ class RemotesViewModel @AssistedInject constructor(
 
 data class RemoteView(val remoteInfo: RemoteInfo, val isExpanded: Boolean)
 
-data class RemotesState(val remotes: List<RemoteView>, val isExpanded: Boolean)
+data class RemotesState(val remotes: List<RemoteView>, val isExpanded: Boolean, val currentBranch: Ref?)

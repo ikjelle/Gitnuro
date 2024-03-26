@@ -1,6 +1,7 @@
 package com.jetpackduba.gitnuro.ui.context_menu
 
 import androidx.compose.ui.res.painterResource
+import com.jetpackduba.gitnuro.AppIcons
 import com.jetpackduba.gitnuro.extensions.isHead
 import com.jetpackduba.gitnuro.extensions.simpleLogName
 import org.eclipse.jgit.lib.Ref
@@ -17,13 +18,14 @@ fun branchContextMenuItems(
     onDeleteRemoteBranch: () -> Unit = {},
     onPushToRemoteBranch: () -> Unit,
     onPullFromRemoteBranch: () -> Unit,
+    onChangeDefaultUpstreamBranch: () -> Unit,
 ): List<ContextMenuElement> {
     return mutableListOf<ContextMenuElement>().apply {
         if (!isCurrentBranch) {
             add(
                 ContextMenuElement.ContextTextEntry(
                     label = "Checkout branch",
-                    icon = { painterResource("start.svg") },
+                    icon = { painterResource(AppIcons.START) },
                     onClick = onCheckoutBranch
                 )
             )
@@ -44,15 +46,6 @@ fun branchContextMenuItems(
                 add(ContextMenuElement.ContextSeparator)
             }
         }
-        if (isLocal && !isCurrentBranch) {
-            add(
-                ContextMenuElement.ContextTextEntry(
-                    label = "Delete branch",
-                    icon = { painterResource("delete.svg") },
-                    onClick = onDeleteBranch
-                )
-            )
-        }
         if (!isLocal && currentBranch != null && !currentBranch.isHead) {
             add(
                 ContextMenuElement.ContextTextEntry(
@@ -67,13 +60,33 @@ fun branchContextMenuItems(
                 )
             )
         }
+
+        if (isLocal) {
+            add(
+                ContextMenuElement.ContextTextEntry(
+                    label = "Change default upstream branch",
+                    onClick = onChangeDefaultUpstreamBranch
+                ),
+            )
+        }
+
         if (!isLocal) {
             add(
                 ContextMenuElement.ContextTextEntry(
                     label = "Delete remote branch",
-                    icon = { painterResource("delete.svg") },
+                    icon = { painterResource(AppIcons.DELETE) },
                     onClick = onDeleteRemoteBranch
                 ),
+            )
+        }
+
+        if (isLocal && !isCurrentBranch) {
+            add(
+                ContextMenuElement.ContextTextEntry(
+                    label = "Delete branch",
+                    icon = { painterResource(AppIcons.DELETE) },
+                    onClick = onDeleteBranch
+                )
             )
         }
 

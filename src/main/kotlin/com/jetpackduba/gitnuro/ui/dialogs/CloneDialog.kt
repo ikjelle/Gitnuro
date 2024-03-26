@@ -1,41 +1,43 @@
 package com.jetpackduba.gitnuro.ui.dialogs
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusProperties
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
-import com.jetpackduba.gitnuro.git.CloneStatus
+import com.jetpackduba.gitnuro.AppIcons
+import com.jetpackduba.gitnuro.extensions.handMouseClickable
+import com.jetpackduba.gitnuro.extensions.handOnHover
+import com.jetpackduba.gitnuro.git.CloneState
 import com.jetpackduba.gitnuro.theme.outlinedTextFieldColors
-
 import com.jetpackduba.gitnuro.theme.textButtonColors
 import com.jetpackduba.gitnuro.ui.components.AdjustableOutlinedTextField
 import com.jetpackduba.gitnuro.ui.components.PrimaryButton
 import com.jetpackduba.gitnuro.ui.components.gitnuroViewModel
-import com.jetpackduba.gitnuro.ui.openDirectoryDialog
 import com.jetpackduba.gitnuro.viewmodels.CloneViewModel
 import java.io.File
 
 @Composable
 fun CloneDialog(
-    cloneViewModel: CloneViewModel = gitnuroViewModel(), // TODO THIS CRASHES
+    cloneViewModel: CloneViewModel = gitnuroViewModel(),
     onClose: () -> Unit,
     onOpenRepository: (File) -> Unit,
 ) {
-    val cloneStatus = cloneViewModel.cloneStatus.collectAsState()
+    val cloneStatus = cloneViewModel.cloneState.collectAsState()
     val cloneStatusValue = cloneStatus.value
 
     MaterialDialog(
@@ -45,30 +47,23 @@ fun CloneDialog(
         Box(
             modifier = Modifier
                 .width(720.dp)
-                .height(280.dp)
                 .animateContentSize()
         ) {
             when (cloneStatusValue) {
-                is CloneStatus.Cloning -> {
+                is CloneState.Cloning -> {
                     Cloning(cloneViewModel, cloneStatusValue)
                 }
 
-                is CloneStatus.Cancelling -> {
+                is CloneState.Cancelling -> {
                     Cancelling()
                 }
 
-                is CloneStatus.Completed -> {
+                is CloneState.Completed -> {
                     onOpenRepository(cloneStatusValue.repoDir)
                     onClose()
                 }
 
-                is CloneStatus.Fail -> CloneInput(
-                    cloneViewModel = cloneViewModel,
-                    onClose = onClose,
-                    errorMessage = cloneStatusValue.reason
-                )
-
-                CloneStatus.None -> CloneInput(
+                is CloneState.Fail, CloneState.None -> CloneDialogView(
                     cloneViewModel = cloneViewModel,
                     onClose = onClose,
                 )
@@ -78,23 +73,23 @@ fun CloneDialog(
 }
 
 @Composable
-private fun CloneInput(
+private fun CloneDialogView(
     cloneViewModel: CloneViewModel,
     onClose: () -> Unit,
-    errorMessage: String? = null,
 ) {
-    var url by remember { mutableStateOf(cloneViewModel.url) }
-    var directory by remember { mutableStateOf(cloneViewModel.directory) }
+    var url by remember(cloneViewModel) { mutableStateOf(cloneViewModel.repositoryUrl.value) }
+    var directory by remember(cloneViewModel) { mutableStateOf(cloneViewModel.directoryPath.value) }
+    var folder by remember(cloneViewModel) { mutableStateOf(cloneViewModel.folder.value) }
+    var cloneSubmodules by remember { mutableStateOf(true) }
+
+    val error by cloneViewModel.error.collectAsState()
 
     val urlFocusRequester = remember { FocusRequester() }
     val directoryFocusRequester = remember { FocusRequester() }
+    val folderFocusRequester = remember { FocusRequester() }
     val directoryButtonFocusRequester = remember { FocusRequester() }
     val cloneButtonFocusRequester = remember { FocusRequester() }
     val cancelButtonFocusRequester = remember { FocusRequester() }
-
-    LaunchedEffect(Unit) {
-        urlFocusRequester.requestFocus()
-    }
 
     Column(
         modifier = Modifier.fillMaxWidth()
@@ -102,14 +97,19 @@ private fun CloneInput(
     ) {
         Text(
             "Clone a new repository",
-            style = MaterialTheme.typography.h3,
+            style = MaterialTheme.typography.h4,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp)
+                .padding(vertical = 4.dp),
+            fontWeight = FontWeight.SemiBold,
         )
 
         TextInput(
-            modifier = Modifier.padding(top = 8.dp),
+            modifier = Modifier.padding(top = 8.dp).onFocusChanged {
+                if (!it.hasFocus) {
+                    folder = TextFieldValue(cloneViewModel.repoName(url.text))
+                }
+            },
             title = "URL",
             value = url,
             focusRequester = urlFocusRequester,
@@ -117,63 +117,102 @@ private fun CloneInput(
                 previous = cancelButtonFocusRequester
                 next = directoryFocusRequester
             },
-            onValueChange = {
+            onValueChange = { repositoryUrl ->
+                url = repositoryUrl
+                cloneViewModel.onRepositoryUrlChanged(repositoryUrl)
                 cloneViewModel.resetStateIfError()
-                url = it
-                cloneViewModel.url = url
+            }
+        )
+
+        TextInput(
+            modifier = Modifier.padding(top = 16.dp),
+            title = "Directory",
+            value = directory,
+            focusRequester = directoryFocusRequester,
+            focusProperties = {
+                previous = urlFocusRequester
+                next = directoryButtonFocusRequester
+            },
+            onValueChange = {
+                directory = it
+                cloneViewModel.onDirectoryPathChanged(directory)
+                cloneViewModel.resetStateIfError()
+            },
+            trailingIcon = {
+                IconButton(
+                    onClick = {
+                        cloneViewModel.resetStateIfError()
+                        val newDirectory = cloneViewModel.openDirectoryPicker()
+                        if (newDirectory != null) {
+                            directory = TextFieldValue(newDirectory, selection = TextRange(newDirectory.count()))
+                            cloneViewModel.onDirectoryPathChanged(directory)
+                            cloneViewModel.resetStateIfError()
+                            directoryFocusRequester.requestFocus()
+                        }
+                    },
+                    modifier = Modifier
+                        .focusRequester(directoryButtonFocusRequester)
+                        .focusProperties {
+                            previous = directoryFocusRequester
+                            next = folderFocusRequester
+                        }
+                        .handOnHover()
+                        .size(40.dp),
+                ) {
+                    Icon(
+                        painterResource(AppIcons.SEARCH),
+                        contentDescription = "Search",
+                        tint = MaterialTheme.colors.onBackground,
+                    )
+                }
+            }
+        )
+
+        TextInput(
+            modifier = Modifier.padding(top = 16.dp),
+            title = "Folder",
+            value = folder,
+            focusRequester = folderFocusRequester,
+            focusProperties = {
+                previous = cancelButtonFocusRequester
+                next = directoryFocusRequester
+            },
+            onValueChange = { folderName ->
+                folder = folderName
+                cloneViewModel.onFolderNameChanged(folderName)
+                cloneViewModel.resetStateIfError()
             }
         )
 
         Row(
-            modifier = Modifier
-                .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.handMouseClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) {
+                cloneSubmodules = !cloneSubmodules
+            }
+                .fillMaxWidth()
+                .padding(top = 16.dp)
         ) {
-
-            TextInput(
-                modifier = Modifier.weight(1f),
-                title = "Directory",
-                value = directory,
-                focusRequester = directoryFocusRequester,
-                focusProperties = {
-                    previous = urlFocusRequester
-                    next = directoryButtonFocusRequester
-                },
-                onValueChange = {
-                    cloneViewModel.resetStateIfError()
-                    directory = it
-                    cloneViewModel.directory = directory
-                },
-                textFieldShape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp)
-            )
-
-            Button(
-                onClick = {
-                    cloneViewModel.resetStateIfError()
-                    val newDirectory = openDirectoryDialog()
-                    if (newDirectory != null) {
-                        directory = newDirectory
-                        cloneViewModel.directory = directory
-                    }
+            Checkbox(
+                checked = cloneSubmodules,
+                onCheckedChange = {
+                    cloneSubmodules = it
                 },
                 modifier = Modifier
-                    .focusRequester(directoryButtonFocusRequester)
-                    .focusProperties {
-                        previous = directoryFocusRequester
-                        next = cloneButtonFocusRequester
-                    }
-                    .height(40.dp),
-                shape = RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp)
-            ) {
-                Icon(
-                    Icons.Default.Search,
-                    contentDescription = null,
-                    tint = MaterialTheme.colors.onPrimary,
-                )
-            }
+                    .padding(all = 8.dp)
+                    .size(12.dp)
+            )
+
+            Text(
+                "Clone submodules recursively",
+                style = MaterialTheme.typography.body2,
+                color = MaterialTheme.colors.onBackground,
+            )
         }
 
-        if (errorMessage != null) {
+        AnimatedVisibility(error.isNotBlank()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -182,17 +221,15 @@ private fun CloneInput(
                     .background(MaterialTheme.colors.error)
             ) {
                 Text(
-                    errorMessage,
+                    error,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp, horizontal = 8.dp),
                     color = MaterialTheme.colors.onError,
                 )
             }
-
         }
 
-        Spacer(Modifier.weight(1f))
         Row(
             modifier = Modifier
                 .padding(top = 16.dp)
@@ -212,7 +249,7 @@ private fun CloneInput(
             )
             PrimaryButton(
                 onClick = {
-                    cloneViewModel.clone(directory, url)
+                    cloneViewModel.clone(directory.text, url.text, folder.text, cloneSubmodules)
                 },
                 modifier = Modifier
                     .focusRequester(cloneButtonFocusRequester)
@@ -223,22 +260,26 @@ private fun CloneInput(
                 text = "Clone"
             )
         }
+
+        LaunchedEffect(Unit) {
+            urlFocusRequester.requestFocus()
+        }
     }
 }
 
 @Composable
-private fun Cloning(cloneViewModel: CloneViewModel, cloneStatusValue: CloneStatus.Cloning) {
+private fun Cloning(cloneViewModel: CloneViewModel, cloneStateValue: CloneState.Cloning) {
     Box(
         modifier = Modifier
-            .fillMaxSize(),
+            .fillMaxWidth(),
     ) {
-        val progress = remember(cloneStatusValue) {
-            val total = cloneStatusValue.total
+        val progress = remember(cloneStateValue) {
+            val total = cloneStateValue.total
 
             if (total == 0) // Prevent division by 0
                 -1f
             else
-                cloneStatusValue.progress / total.toFloat()
+                cloneStateValue.progress / total.toFloat()
         }
 
         Column(
@@ -247,7 +288,7 @@ private fun Cloning(cloneViewModel: CloneViewModel, cloneStatusValue: CloneStatu
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
 
-            Text(cloneStatusValue.taskName, color = MaterialTheme.colors.onBackground)
+            Text(cloneStateValue.taskName, color = MaterialTheme.colors.onBackground)
 
             if (progress >= 0f)
                 CircularProgressIndicator(
@@ -287,7 +328,7 @@ private fun Cloning(cloneViewModel: CloneViewModel, cloneStatusValue: CloneStatu
 private fun Cancelling() {
     Column(
         modifier = Modifier
-            .fillMaxSize(),
+            .fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -308,30 +349,27 @@ private fun Cancelling() {
 private fun TextInput(
     modifier: Modifier = Modifier,
     title: String,
-    value: String,
+    value: TextFieldValue,
     enabled: Boolean = true,
     focusRequester: FocusRequester,
     focusProperties: FocusProperties.() -> Unit,
-    onValueChange: (String) -> Unit,
+    onValueChange: (TextFieldValue) -> Unit,
     textFieldShape: Shape = RoundedCornerShape(4.dp),
+    trailingIcon: @Composable (() -> Unit)? = null,
 ) {
-    Row(
-        modifier = modifier
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+    Column(
+        modifier = modifier,
     ) {
         Text(
             text = title,
             style = MaterialTheme.typography.body1,
             modifier = Modifier
-                .width(100.dp)
-                .padding(end = 16.dp),
+                .padding(bottom = 8.dp),
         )
 
         AdjustableOutlinedTextField(
             value = value,
             modifier = Modifier
-                .weight(1f)
                 .focusRequester(focusRequester)
                 .focusProperties(focusProperties),
             enabled = enabled,
@@ -339,6 +377,7 @@ private fun TextInput(
             colors = outlinedTextFieldColors(),
             singleLine = true,
             shape = textFieldShape,
+            trailingIcon = trailingIcon,
         )
     }
 }

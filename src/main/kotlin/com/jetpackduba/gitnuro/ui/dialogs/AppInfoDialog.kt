@@ -12,6 +12,7 @@ import androidx.compose.ui.unit.dp
 import com.jetpackduba.gitnuro.AppConstants
 import com.jetpackduba.gitnuro.AppConstants.openSourceProjects
 import com.jetpackduba.gitnuro.Project
+import com.jetpackduba.gitnuro.extensions.handOnHover
 import com.jetpackduba.gitnuro.theme.textButtonColors
 import com.jetpackduba.gitnuro.ui.components.ScrollableLazyColumn
 import com.jetpackduba.gitnuro.ui.components.TextLink
@@ -19,6 +20,7 @@ import com.jetpackduba.gitnuro.ui.components.TextLink
 @Composable
 fun AppInfoDialog(
     onClose: () -> Unit,
+    onOpenUrlInBrowser: (String) -> Unit,
 ) {
     MaterialDialog(onCloseRequested = onClose) {
         Column(
@@ -52,14 +54,15 @@ fun AppInfoDialog(
                 }
 
                 items(openSourceProjects) {
-                    ProjectUsed(it)
+                    ProjectUsed(it, onOpenUrlInBrowser = onOpenUrlInBrowser)
                 }
             }
 
             TextButton(
                 modifier = Modifier
                     .padding(top = 16.dp, end = 8.dp)
-                    .align(Alignment.End),
+                    .align(Alignment.End)
+                    .handOnHover(),
                 onClick = onClose,
                 colors = textButtonColors(),
             ) {
@@ -70,7 +73,10 @@ fun AppInfoDialog(
 }
 
 @Composable
-fun ProjectUsed(project: Project) {
+fun ProjectUsed(
+    project: Project,
+    onOpenUrlInBrowser: (String) -> Unit
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.padding(horizontal = 16.dp)
@@ -80,7 +86,8 @@ fun ProjectUsed(project: Project) {
             text = project.name,
             url = project.url,
             modifier = Modifier
-                .padding(vertical = 8.dp)
+                .padding(vertical = 8.dp),
+            onClick = { onOpenUrlInBrowser(project.url) }
         )
 
         Spacer(Modifier.weight(1f))
@@ -90,7 +97,8 @@ fun ProjectUsed(project: Project) {
             url = project.license.url,
             modifier = Modifier
                 .padding(vertical = 8.dp),
-            colorsInverted = true
+            colorsInverted = true,
+            onClick = { onOpenUrlInBrowser(project.license.url) }
         )
     }
 }

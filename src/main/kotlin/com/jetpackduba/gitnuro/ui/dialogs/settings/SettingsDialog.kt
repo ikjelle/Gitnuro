@@ -9,29 +9,150 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.jetpackduba.gitnuro.AppIcons
 import com.jetpackduba.gitnuro.extensions.handMouseClickable
+import com.jetpackduba.gitnuro.managers.Error
 import com.jetpackduba.gitnuro.preferences.DEFAULT_UI_SCALE
 import com.jetpackduba.gitnuro.theme.*
-import com.jetpackduba.gitnuro.ui.components.AdjustableOutlinedTextField
-import com.jetpackduba.gitnuro.ui.components.PrimaryButton
-import com.jetpackduba.gitnuro.ui.components.ScrollableColumn
-import com.jetpackduba.gitnuro.ui.components.gitnuroViewModel
+import com.jetpackduba.gitnuro.ui.components.*
+import com.jetpackduba.gitnuro.ui.dialogs.ErrorDialog
 import com.jetpackduba.gitnuro.ui.dialogs.MaterialDialog
 import com.jetpackduba.gitnuro.ui.dropdowns.DropDownOption
-import com.jetpackduba.gitnuro.ui.dropdowns.ScaleDropDown
-import com.jetpackduba.gitnuro.ui.openFileDialog
 import com.jetpackduba.gitnuro.viewmodels.SettingsViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-enum class SettingsCategory(val displayName: String) {
-    UI("UI"),
-    GIT("Git"),
+sealed interface SettingsEntry {
+    data class Section(val name: String) : SettingsEntry
+
+    data class Entry(val icon: String, val name: String, val content: @Composable (SettingsViewModel) -> Unit) :
+        SettingsEntry
 }
 
+val settings = listOf(
+    SettingsEntry.Section("User interface"),
+    SettingsEntry.Entry(AppIcons.PALETTE, "Appearance") { Appearance(it) },
+    SettingsEntry.Entry(AppIcons.LAYOUT, "Layout") { Layout(it) },
+
+    SettingsEntry.Section("GIT"),
+    SettingsEntry.Entry(AppIcons.LIST, "Commits history") { CommitsHistory(it) },
+    SettingsEntry.Entry(AppIcons.BRANCH, "Branches") { Branches(it) },
+    SettingsEntry.Entry(AppIcons.CLOUD, "Remote actions") { RemoteActions(it) },
+
+    SettingsEntry.Section("Network"),
+    SettingsEntry.Entry(AppIcons.NETWORK, "Proxy") { Proxy(it) },
+    SettingsEntry.Entry(AppIcons.PASSWORD, "Authentication") { Authentication(it) },
+    SettingsEntry.Entry(AppIcons.SECURITY, "Security") { Security(it) },
+
+    SettingsEntry.Section("Tools"),
+    SettingsEntry.Entry(AppIcons.TERMINAL, "Terminal") { Terminal(it) },
+    SettingsEntry.Entry(AppIcons.INFO, "Logs") { Logs(it) },
+)
+
+@Composable
+fun Proxy(settingsViewModel: SettingsViewModel) {
+    var useProxy by remember { mutableStateOf(settingsViewModel.useProxy) }
+
+    var hostName by remember { mutableStateOf(settingsViewModel.proxyHostName) }
+    var portNumber by remember { mutableStateOf(settingsViewModel.proxyPortNumber) }
+
+    var useAuth by remember { mutableStateOf(settingsViewModel.proxyUseAuth) }
+    var user by remember { mutableStateOf(settingsViewModel.proxyHostUser) }
+    var password by remember { mutableStateOf(settingsViewModel.proxyHostPassword) }
+
+    val proxyTypes = listOf(ProxyType.HTTP, ProxyType.SOCKS)
+    val proxyTypesDropDownOptions = proxyTypes.map { DropDownOption(it, it.name) }
+
+    var currentProxyType by remember {
+        mutableStateOf(proxyTypesDropDownOptions.first { it.value == settingsViewModel.proxyType })
+    }
+
+    Column {
+        SettingToggle(
+            title = "Use proxy",
+            subtitle = "Set up your proxy configuration if needed",
+            value = useProxy,
+            onValueChanged = {
+                useProxy = it
+                settingsViewModel.useProxy = it
+            },
+        )
+
+        SettingDropDown(
+            title = "Proxy type",
+            subtitle = "Pick between HTTP or SOCKS",
+            dropDownOptions = proxyTypesDropDownOptions,
+            currentOption = currentProxyType,
+            onOptionSelected = {
+                currentProxyType = it
+                settingsViewModel.proxyType = it.value
+            }
+        )
+
+        SettingTextInput(
+            title = "Host name",
+            subtitle = "",
+            value = hostName,
+            onValueChanged = {
+                hostName = it
+                settingsViewModel.proxyHostName = it
+            },
+            enabled = useProxy,
+        )
+
+        SettingIntInput(
+            title = "Port number",
+            subtitle = "",
+            value = portNumber,
+            onValueChanged = {
+                portNumber = it
+                settingsViewModel.proxyPortNumber = it
+            },
+            enabled = useProxy,
+        )
+
+        SettingToggle(
+            title = "Proxy authentication",
+            subtitle = "Use your credentials to provide your identity the proxy server",
+            value = useAuth,
+            onValueChanged = {
+                useAuth = it
+                settingsViewModel.proxyUseAuth = it
+            }
+        )
+
+        SettingTextInput(
+            title = "Login",
+            subtitle = "",
+            value = user,
+            onValueChanged = {
+                user = it
+                settingsViewModel.proxyHostUser = it
+            },
+            enabled = useProxy && useAuth,
+        )
+
+
+        SettingTextInput(
+            title = "Password",
+            subtitle = "",
+            value = password,
+            onValueChanged = {
+                password = it
+                settingsViewModel.proxyHostPassword = it
+            },
+            isPassword = true,
+            enabled = useProxy && useAuth,
+        )
+
+    }
+}
 
 @Composable
 fun SettingsDialog(
@@ -43,14 +164,11 @@ fun SettingsDialog(
         settingsViewModel.resetInfo()
     }
 
-    val categories = remember {
-        listOf(
-            SettingsCategory.UI,
-            SettingsCategory.GIT,
+    var selectedCategory by remember {
+        mutableStateOf<SettingsEntry.Entry>(
+            settings.filterIsInstance(SettingsEntry.Entry::class.java).first()
         )
     }
-
-    var selectedCategory by remember { mutableStateOf(SettingsCategory.UI) }
 
     MaterialDialog(
         background = MaterialTheme.colors.surface,
@@ -58,63 +176,124 @@ fun SettingsDialog(
             settingsViewModel.savePendingChanges()
 
             onDismiss()
-        }
+        },
+        paddingHorizontal = 0.dp,
+        paddingVertical = 0.dp,
     ) {
-        Column(modifier = Modifier.height(720.dp)) {
-            Text(
-                text = "Settings",
-                style = MaterialTheme.typography.h3,
-                color = MaterialTheme.colors.onBackground,
-                modifier = Modifier.padding(top = 8.dp, bottom = 16.dp)
-            )
+        Row(modifier = Modifier.height(720.dp).width(1000.dp)) {
+            Column(
+                modifier = Modifier
+                    .width(200.dp)
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colors.background)
+            ) {
+                Text(
+                    text = "Settings",
+                    style = MaterialTheme.typography.h3,
+                    color = MaterialTheme.colors.onBackground,
+                    modifier = Modifier.padding(16.dp),
+                    fontWeight = FontWeight.Bold,
+                )
 
-            Row(modifier = Modifier.weight(1f)) {
-                ScrollableColumn(
-                    modifier = Modifier
-                        .width(200.dp)
-                        .fillMaxHeight()
-                        .background(MaterialTheme.colors.background)
-                ) {
-                    categories.forEach { category ->
-                        Category(
-                            category = category,
-                            isSelected = category == selectedCategory,
-                            onClick = { selectedCategory = category }
-                        )
-                    }
-                }
+                Row(modifier = Modifier.weight(1f)) {
+                    ScrollableColumn(
+                        modifier = Modifier.fillMaxHeight()
+                    ) {
+                        settings.forEachIndexed { index, settingEntry ->
+                            when (settingEntry) {
+                                is SettingsEntry.Section -> {
+                                    if (index != 0) {
+                                        Spacer(Modifier.height(16.dp))
+                                    }
+                                    Section(settingEntry.name)
+                                }
 
-
-                Column(
-                    modifier = Modifier
-                        .width(720.dp)
-                        .padding(horizontal = 16.dp)
-                ) {
-                    when (selectedCategory) {
-                        SettingsCategory.UI -> UiSettings(settingsViewModel)
-                        SettingsCategory.GIT -> GitSettings(settingsViewModel)
+                                is SettingsEntry.Entry -> Entry(
+                                    icon = settingEntry.icon,
+                                    name = settingEntry.name,
+                                    isSelected = settingEntry == selectedCategory,
+                                    onClick = {
+                                        selectedCategory = settingEntry
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            PrimaryButton(
-                text = "Accept",
-                modifier = Modifier
-                    .padding(end = 8.dp, bottom = 8.dp)
-                    .align(Alignment.End),
-                onClick = {
-                    settingsViewModel.savePendingChanges()
-                    onDismiss()
-                },
-            )
+            Column {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, true)
+                        .padding(start = 16.dp, top = 64.dp, end = 16.dp)
+                ) {
+                    selectedCategory.content(settingsViewModel)
+                }
+
+                PrimaryButton(
+                    text = "Accept",
+                    modifier = Modifier
+                        .padding(end = 16.dp, bottom = 16.dp)
+                        .align(Alignment.End),
+                    onClick = {
+                        settingsViewModel.savePendingChanges()
+                        onDismiss()
+                    },
+                )
+            }
+
         }
     }
 }
 
 @Composable
-fun GitSettings(settingsViewModel: SettingsViewModel) {
+private fun Entry(icon: String, name: String, isSelected: Boolean, onClick: () -> Unit) {
+    val backgroundColor = if (isSelected)
+        MaterialTheme.colors.backgroundSelected
+    else
+        MaterialTheme.colors.background
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .background(color = backgroundColor)
+            .handMouseClickable(onClick)
+            .fillMaxWidth(),
+    ) {
+        Icon(
+            painterResource(icon),
+            contentDescription = name,
+            tint = MaterialTheme.colors.onBackgroundSecondary,
+            modifier = Modifier
+                .padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 8.dp)
+                .size(24.dp)
+        )
+
+        Text(
+            text = name,
+            style = MaterialTheme.typography.body1,
+            color = MaterialTheme.colors.onBackground,
+        )
+    }
+}
+
+@Composable
+private fun Section(name: String) {
+    Text(
+        text = name.uppercase(),
+        color = MaterialTheme.colors.onBackgroundSecondary,
+        style = MaterialTheme.typography.body2,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        fontWeight = FontWeight.Bold,
+    )
+}
+
+
+@Composable
+private fun CommitsHistory(settingsViewModel: SettingsViewModel) {
     val commitsLimitEnabled by settingsViewModel.commitsLimitEnabledFlow.collectAsState()
-    val ffMerge by settingsViewModel.ffMergeFlow.collectAsState()
     var commitsLimit by remember { mutableStateOf(settingsViewModel.commitsLimit) }
 
     SettingToggle(
@@ -136,6 +315,92 @@ fun GitSettings(settingsViewModel: SettingsViewModel) {
             settingsViewModel.commitsLimit = value
         }
     )
+}
+
+@Composable
+private fun RemoteActions(settingsViewModel: SettingsViewModel) {
+    val pullRebase by settingsViewModel.pullRebaseFlow.collectAsState()
+    val pushWithLease by settingsViewModel.pushWithLeaseFlow.collectAsState()
+
+    SettingToggle(
+        title = "Pull with rebase as default",
+        subtitle = "Rebase changes instead of merging when pulling",
+        value = pullRebase,
+        onValueChanged = { value ->
+            settingsViewModel.pullRebase = value
+        }
+    )
+
+    SettingToggle(
+        title = "Force push with lease",
+        subtitle = "Check if the local version remote branch is up to date to avoid accidentally overriding unintended commits",
+        value = pushWithLease,
+        onValueChanged = { value ->
+            settingsViewModel.pushWithLease = value
+        }
+    )
+}
+
+
+@Composable
+private fun Authentication(settingsViewModel: SettingsViewModel) {
+    val cacheCredentialsInMemory by settingsViewModel.cacheCredentialsInMemoryFlow.collectAsState()
+
+    SettingToggle(
+        title = "Cache HTTP credentials in memory",
+        subtitle = "If active, HTTP Credentials will be remembered until Gitnuro is closed",
+        value = cacheCredentialsInMemory,
+        onValueChanged = { value ->
+            settingsViewModel.cacheCredentialsInMemory = value
+        }
+    )
+}
+
+@Composable
+private fun Security(settingsViewModel: SettingsViewModel) {
+    val verifySsl by settingsViewModel.verifySslFlow.collectAsState()
+
+    SettingToggle(
+        title = "Do not verify SSL security",
+        subtitle = "If active, you may connect to the remote server via insecure HTTPS connection",
+        value = !verifySsl,
+        onValueChanged = { value ->
+            settingsViewModel.verifySsl = !value
+        }
+    )
+}
+
+@Composable
+fun Terminal(settingsViewModel: SettingsViewModel) {
+    var commitsLimit by remember { mutableStateOf(settingsViewModel.terminalPath) }
+
+    SettingTextInput(
+        title = "Custom terminal path",
+        subtitle = "If empty, Gitnuro will try to open the default terminal emulator",
+        value = commitsLimit,
+        onValueChanged = { value ->
+            commitsLimit = value
+            settingsViewModel.terminalPath = value
+        }
+    )
+}
+
+@Composable
+fun Logs(settingsViewModel: SettingsViewModel) {
+    SettingButton(
+        title = "Logs",
+        subtitle = "View the logs folder",
+        buttonText = "Open folder",
+        onClick = {
+            settingsViewModel.openLogsFolderInFileExplorer()
+        }
+    )
+}
+
+
+@Composable
+private fun Branches(settingsViewModel: SettingsViewModel) {
+    val ffMerge by settingsViewModel.ffMergeFlow.collectAsState()
 
     SettingToggle(
         title = "Fast-forward merge",
@@ -148,16 +413,31 @@ fun GitSettings(settingsViewModel: SettingsViewModel) {
 }
 
 @Composable
-fun UiSettings(settingsViewModel: SettingsViewModel) {
+private fun Layout(settingsViewModel: SettingsViewModel) {
+    val swapUncommittedChanges by settingsViewModel.swapUncommittedChangesFlow.collectAsState()
+
+    SettingToggle(
+        title = "Swap position for staged/unstaged views",
+        subtitle = "Show the list of unstaged changes above the list of staged changes",
+        value = swapUncommittedChanges,
+        onValueChanged = { value ->
+            settingsViewModel.swapUncommittedChanges = value
+        }
+    )
+}
+
+@Composable
+private fun Appearance(settingsViewModel: SettingsViewModel) {
     val currentTheme by settingsViewModel.themeState.collectAsState()
+    val (errorToDisplay, setErrorToDisplay) = remember { mutableStateOf<Error?>(null) }
 
     SettingDropDown(
         title = "Theme",
         subtitle = "Select the UI theme between light and dark mode",
         dropDownOptions = themeLists,
-        currentOption = currentTheme,
-        onOptionSelected = { theme ->
-            settingsViewModel.theme = theme
+        currentOption = DropDownOption(currentTheme, currentTheme.displayName),
+        onOptionSelected = { themeDropDown ->
+            settingsViewModel.theme = themeDropDown.value
         }
     )
 
@@ -167,10 +447,16 @@ fun UiSettings(settingsViewModel: SettingsViewModel) {
             subtitle = "Select a JSON file to load the custom theme",
             buttonText = "Open file",
             onClick = {
-                val filePath = openFileDialog()
+                val filePath = settingsViewModel.openFileDialog()
 
                 if (filePath != null) {
-                    settingsViewModel.saveCustomTheme(filePath)
+                    val error = settingsViewModel.saveCustomTheme(filePath)
+
+                    // We check if it's null because setting errorToDisplay to null could possibly hide
+                    // other errors that are being displayed
+                    if (error != null) {
+                        setErrorToDisplay(error)
+                    }
                 }
             }
         )
@@ -180,12 +466,16 @@ fun UiSettings(settingsViewModel: SettingsViewModel) {
     var options by remember {
         mutableStateOf(
             listOf(
-                ScaleDropDown(1f, "100%"),
-                ScaleDropDown(1.25f, "125%"),
-                ScaleDropDown(1.5f, "150%"),
-                ScaleDropDown(2f, "200%"),
-                ScaleDropDown(2.5f, "250%"),
-                ScaleDropDown(3f, "300%"),
+                DropDownOption(0.75f, "75%"),
+                DropDownOption(1f, "100%"),
+                DropDownOption(1.25f, "125%"),
+                DropDownOption(1.5f, "150%"),
+                DropDownOption(1.75f, "175%"),
+                DropDownOption(2f, "200%"),
+                DropDownOption(2.25f, "225%"),
+                DropDownOption(2.5f, "250%"),
+                DropDownOption(2.75f, "275%"),
+                DropDownOption(3f, "300%"),
             )
         )
     }
@@ -202,7 +492,7 @@ fun UiSettings(settingsViewModel: SettingsViewModel) {
 
         if (matchingOption == null) { // Scale that we haven't taken in consideration
             // Create a new scale and add it to the options list
-            matchingOption = ScaleDropDown(scaleUi, "${(scaleUi * 100).toInt()}%")
+            matchingOption = DropDownOption(scaleUi, "${(scaleUi * 100).toInt()}%")
             val newOptions = options.toMutableList()
             newOptions.add(matchingOption)
             newOptions.sortBy { it.value }
@@ -222,39 +512,23 @@ fun UiSettings(settingsViewModel: SettingsViewModel) {
             settingsViewModel.scaleUi = newValue.value
         }
     )
-}
 
-@Composable
-fun Category(
-    category: SettingsCategory,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-) {
-    val backgroundColor = if (isSelected)
-        MaterialTheme.colors.backgroundSelected
-    else
-        MaterialTheme.colors.background
-
-    Text(
-        text = category.displayName,
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(color = backgroundColor)
-            .handMouseClickable(onClick)
-            .padding(8.dp),
-        style = MaterialTheme.typography.body1,
-        color = MaterialTheme.colors.onBackground,
-    )
+    if (errorToDisplay != null) {
+        ErrorDialog(
+            errorToDisplay,
+            onAccept = { setErrorToDisplay(null) }
+        )
+    }
 }
 
 
 @Composable
-fun <T : DropDownOption> SettingDropDown(
+fun <T> SettingDropDown(
     title: String,
     subtitle: String,
-    dropDownOptions: List<T>,
-    onOptionSelected: (T) -> Unit,
-    currentOption: T,
+    dropDownOptions: List<DropDownOption<T>>,
+    onOptionSelected: (DropDownOption<T>) -> Unit,
+    currentOption: DropDownOption<T>,
 ) {
     var showThemeDropdown by remember { mutableStateOf(false) }
     Row(
@@ -280,7 +554,7 @@ fun <T : DropDownOption> SettingDropDown(
                 )
 
                 Icon(
-                    painter = painterResource("dropdown.svg"),
+                    painter = painterResource(AppIcons.DROPDOWN),
                     contentDescription = null,
                     tint = MaterialTheme.colors.onBackground,
                 )
@@ -343,52 +617,9 @@ fun SettingToggle(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        Switch(
-            checked = value,
-            onCheckedChange = onValueChanged,
-            colors = SwitchDefaults.colors(uncheckedThumbColor = MaterialTheme.colors.secondary)
-        )
-    }
-}
-
-@Composable
-fun SettingSlider(
-    title: String,
-    subtitle: String,
-    value: Float,
-    minValue: Float,
-    maxValue: Float,
-    steps: Int,
-    onValueChanged: (Float) -> Unit,
-    onValueChangeFinished: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        FieldTitles(title, subtitle)
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        Text(
-            text = "${minValue.toInt()}%",
-            style = MaterialTheme.typography.caption,
-        )
-
-        Slider(
-            value = value,
-            onValueChange = onValueChanged,
-            onValueChangeFinished = onValueChangeFinished,
-            steps = steps,
-            valueRange = minValue..maxValue,
-            modifier = Modifier
-                .width(200.dp)
-                .padding(horizontal = 4.dp)
-        )
-
-        Text(
-            text = "${maxValue.toInt()}%",
-            style = MaterialTheme.typography.caption,
+        AppSwitch(
+            isChecked = value,
+            onValueChanged = onValueChanged,
         )
     }
 }
@@ -446,6 +677,43 @@ fun SettingIntInput(
 }
 
 @Composable
+fun SettingTextInput(
+    title: String,
+    subtitle: String,
+    value: String,
+    enabled: Boolean = true,
+    isPassword: Boolean = false,
+    onValueChanged: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier.padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        FieldTitles(title, subtitle)
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        var text by remember {
+            mutableStateOf(value)
+        }
+
+        AdjustableOutlinedTextField(
+            value = text,
+            modifier = Modifier.width(240.dp),
+            isError = false,
+            enabled = enabled,
+            onValueChange = {
+                text = it
+                onValueChanged(it)
+            },
+            visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
+            colors = outlinedTextFieldColors(),
+            singleLine = true,
+        )
+    }
+}
+
+@Composable
 private fun FieldTitles(
     title: String,
     subtitle: String,
@@ -457,11 +725,12 @@ private fun FieldTitles(
             text = title,
             color = MaterialTheme.colors.onBackground,
             style = MaterialTheme.typography.body1,
+            fontWeight = FontWeight.Medium,
         )
 
         Text(
             text = subtitle,
-            color = MaterialTheme.colors.onBackgroundSecondary,
+            color = MaterialTheme.colors.onBackground,
             modifier = Modifier.padding(top = 4.dp),
             style = MaterialTheme.typography.body2,
         )
@@ -483,5 +752,20 @@ private fun isValidFloat(value: String): Boolean {
         true
     } catch (ex: Exception) {
         false
+    }
+}
+
+enum class ProxyType(val value: Int) {
+    HTTP(1),
+    SOCKS(2);
+
+    companion object {
+        fun fromInt(value: Int): ProxyType {
+            return when (value) {
+                HTTP.value -> HTTP
+                SOCKS.value -> SOCKS
+                else -> throw NotImplementedError("Proxy type unknown")
+            }
+        }
     }
 }

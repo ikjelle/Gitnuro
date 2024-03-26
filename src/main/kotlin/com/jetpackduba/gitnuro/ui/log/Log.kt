@@ -6,8 +6,9 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -20,16 +21,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -37,6 +39,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.jetpackduba.gitnuro.AppIcons
 import com.jetpackduba.gitnuro.extensions.*
 import com.jetpackduba.gitnuro.git.graph.GraphCommitList
 import com.jetpackduba.gitnuro.git.graph.GraphNode
@@ -47,11 +50,16 @@ import com.jetpackduba.gitnuro.theme.*
 import com.jetpackduba.gitnuro.ui.SelectedItem
 import com.jetpackduba.gitnuro.ui.components.AvatarImage
 import com.jetpackduba.gitnuro.ui.components.ScrollableLazyColumn
+import com.jetpackduba.gitnuro.ui.components.gitnuroDynamicViewModel
 import com.jetpackduba.gitnuro.ui.components.gitnuroViewModel
+import com.jetpackduba.gitnuro.ui.components.tooltip.InstantTooltip
+import com.jetpackduba.gitnuro.ui.components.tooltip.InstantTooltipPosition
 import com.jetpackduba.gitnuro.ui.context_menu.*
 import com.jetpackduba.gitnuro.ui.dialogs.NewBranchDialog
 import com.jetpackduba.gitnuro.ui.dialogs.NewTagDialog
 import com.jetpackduba.gitnuro.ui.dialogs.ResetBranchDialog
+import com.jetpackduba.gitnuro.ui.dialogs.SetDefaultUpstreamBranchDialog
+import com.jetpackduba.gitnuro.ui.resizePointerIconEast
 import com.jetpackduba.gitnuro.viewmodels.LogSearch
 import com.jetpackduba.gitnuro.viewmodels.LogStatus
 import com.jetpackduba.gitnuro.viewmodels.LogViewModel
@@ -59,7 +67,6 @@ import kotlinx.coroutines.launch
 import org.eclipse.jgit.lib.Ref
 import org.eclipse.jgit.lib.RepositoryState
 import org.eclipse.jgit.revwalk.RevCommit
-import java.awt.Cursor
 
 private val colors = listOf(
     Color(0xFF42a5f5),
@@ -73,6 +80,8 @@ private val colors = listOf(
 private const val CANVAS_MIN_WIDTH = 100
 private const val CANVAS_DEFAULT_WIDTH = 120
 private const val MIN_GRAPH_LANES = 2
+
+private const val HORIZONTAL_SCROLL_PIXELS_MULTIPLIER = 10
 
 /**
  * Additional number of lanes to simulate to create a margin at the end of the graph.
@@ -94,10 +103,49 @@ fun Log(
     selectedItem: SelectedItem,
     repositoryState: RepositoryState,
 ) {
-    val scope = rememberCoroutineScope()
     val logStatusState = logViewModel.logStatus.collectAsState()
     val logStatus = logStatusState.value
     val showLogDialog by logViewModel.logDialog.collectAsState()
+
+    when (logStatus) {
+        is LogStatus.Loaded -> LogLoaded(logViewModel, logStatus, showLogDialog, selectedItem, repositoryState)
+        LogStatus.Loading -> LogLoading()
+    }
+}
+
+@Composable
+private fun LogLoading() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colors.background),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        CircularProgressIndicator()
+        Text(
+            text = "Loading commits history...",
+            style = MaterialTheme.typography.h4,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun LogLoaded(
+    logViewModel: LogViewModel,
+    logStatus: LogStatus.Loaded,
+    showLogDialog: LogDialog,
+    selectedItem: SelectedItem,
+    repositoryState: RepositoryState
+) {
+    val scope = rememberCoroutineScope()
+    val hasUncommittedChanges = logStatus.hasUncommittedChanges
+    val commitList = logStatus.plotCommitList
+    val verticalScrollState by logViewModel.verticalListState.collectAsState()
+    val horizontalScrollState by logViewModel.horizontalListState.collectAsState()
+    val searchFilter = logViewModel.logSearchFilterResults.collectAsState()
+    val searchFilterValue = searchFilter.value
 
     val selectedCommit = if (selectedItem is SelectedItem.CommitBasedItem) {
         selectedItem.revCommit
@@ -105,153 +153,159 @@ fun Log(
         null
     }
 
-    if (logStatus is LogStatus.Loaded) {
-        val hasUncommitedChanges = logStatus.hasUncommitedChanges
-        val commitList = logStatus.plotCommitList
-        val verticalScrollState by logViewModel.verticalListState.collectAsState()
-        val horizontalScrollState by logViewModel.horizontalListState.collectAsState()
-        val searchFilter = logViewModel.logSearchFilterResults.collectAsState()
-        val searchFilterValue = searchFilter.value
-        // With this method, whenever the scroll changes, the log is recomposed and the graph list is updated with
-        // the proper scroll position
-        verticalScrollState.observeScrollChanges()
-
-        LaunchedEffect(verticalScrollState, commitList) {
-            launch {
-                logViewModel.focusCommit.collect { commit ->
-                    scrollToCommit(verticalScrollState, commitList, commit)
-                }
-            }
-            launch {
-                logViewModel.scrollToUncommitedChanges.collect {
-                    scrollToUncommitedChanges(verticalScrollState, commitList)
-                }
+    LaunchedEffect(verticalScrollState, commitList) {
+        launch {
+            logViewModel.focusCommit.collect { commit ->
+                scrollToCommit(verticalScrollState, commitList, commit)
             }
         }
+        launch {
+            logViewModel.scrollToUncommittedChanges.collect {
+                scrollToUncommittedChanges(verticalScrollState, commitList)
+            }
+        }
+    }
 
-        LogDialogs(
-            logViewModel,
-            onResetShowLogDialog = { logViewModel.showDialog(LogDialog.None) },
-            showLogDialog = showLogDialog,
+    LogDialogs(
+        logViewModel,
+        onResetShowLogDialog = { logViewModel.showDialog(LogDialog.None) },
+        showLogDialog = showLogDialog,
+    )
+
+    Column(
+        modifier = Modifier
+            .background(MaterialTheme.colors.background)
+            .fillMaxSize()
+    ) {
+        var graphPadding by remember(logViewModel) { mutableStateOf(logViewModel.graphPadding) }
+        var graphWidth = (CANVAS_DEFAULT_WIDTH + graphPadding).dp
+
+        if (graphWidth.value < CANVAS_MIN_WIDTH) graphWidth = CANVAS_MIN_WIDTH.dp
+
+        val maxLinePosition = if (commitList.isNotEmpty())
+            commitList.maxLine
+        else
+            MIN_GRAPH_LANES
+
+        var graphRealWidth = ((maxLinePosition + MARGIN_GRAPH_LANES) * LANE_WIDTH).dp
+
+        // Using remember(graphRealWidth, graphWidth) makes the selected background color glitch when changing tabs
+        if (graphRealWidth < graphWidth) {
+            graphRealWidth = graphWidth
+        }
+
+
+        if (searchFilterValue is LogSearch.SearchResults) {
+            SearchFilter(logViewModel, searchFilterValue)
+        }
+        GraphHeader(
+            graphWidth = graphWidth,
+            onPaddingChange = {
+                graphPadding += it
+                logViewModel.graphPadding = graphPadding
+            },
+            onShowSearch = { scope.launch { logViewModel.onSearchValueChanged("") } }
         )
 
-        Column(
-            modifier = Modifier
-                .background(MaterialTheme.colors.background)
-                .fillMaxSize()
-        ) {
-            var graphPadding by remember(logViewModel) { mutableStateOf(logViewModel.graphPadding) }
-            var graphWidth = (CANVAS_DEFAULT_WIDTH + graphPadding).dp
+        Box {
 
-            if (graphWidth.value < CANVAS_MIN_WIDTH) graphWidth = CANVAS_MIN_WIDTH.dp
-
-            if (searchFilterValue is LogSearch.SearchResults) {
-                SearchFilter(logViewModel, searchFilterValue)
+            // This Box is only used to get a scroll state. With this scroll state we will manually add an offset in
+            // the messages list
+            Box(
+                Modifier
+                    .width(graphWidth)
+                    .fillMaxHeight()
+                    .horizontalScroll(horizontalScrollState)
+                    .padding(bottom = 8.dp)
+            ) {
+                // The content has to be bigger in order to show the scroll bar in the parent component
+                Box(
+                    modifier = Modifier.width(graphRealWidth)
+                )
             }
-            GraphHeader(
+
+            CommitsList(
+                scrollState = verticalScrollState,
+                horizontalScrollState = horizontalScrollState,
+                hasUncommittedChanges = hasUncommittedChanges,
+                searchFilter = if (searchFilterValue is LogSearch.SearchResults) searchFilterValue.commits else null,
+                selectedCommit = selectedCommit,
+                logStatus = logStatus,
+                repositoryState = repositoryState,
+                selectedItem = selectedItem,
+                commitList = commitList,
+                logViewModel = logViewModel,
                 graphWidth = graphWidth,
-                onPaddingChange = {
-                    graphPadding += it
-                    logViewModel.graphPadding = graphPadding
+                commitsLimit = logStatus.commitsLimit,
+                onMerge = { ref ->
+                    logViewModel.mergeBranch(ref)
                 },
-                onShowSearch = { scope.launch { logViewModel.onSearchValueChanged("") } }
+                onRebase = { ref ->
+                    logViewModel.rebaseBranch(ref)
+                },
+                onShowLogDialog = { dialog ->
+                    logViewModel.showDialog(dialog)
+                }
             )
 
-            Box {
-                GraphList(
-                    commitList = commitList,
-                    selectedCommit = selectedCommit,
-                    selectedItem = selectedItem,
-                    repositoryState = repositoryState,
-                    horizontalScrollState = horizontalScrollState,
-                    graphWidth = graphWidth,
-                    verticalScrollState = verticalScrollState,
-                    hasUncommitedChanges = hasUncommitedChanges,
-                    commitsLimit = logStatus.commitsLimit,
-                )
+            val density = LocalDensity.current.density
+            DividerLog(
+                modifier = Modifier.draggable(
+                    rememberDraggableState {
+                        graphPadding += it / density
+                        logViewModel.graphPadding = graphPadding
+                    }, Orientation.Horizontal
+                ),
+                graphWidth = graphWidth,
+            )
 
-                // The commits' messages list overlaps with the graph list to catch all the click events but leaves
-                // a padding, so it doesn't cover the graph
-                MessagesList(
-                    scrollState = verticalScrollState,
-                    hasUncommitedChanges = hasUncommitedChanges,
-                    searchFilter = if (searchFilterValue is LogSearch.SearchResults) searchFilterValue.commits else null,
-                    selectedCommit = selectedCommit,
-                    logStatus = logStatus,
-                    repositoryState = repositoryState,
-                    selectedItem = selectedItem,
-                    commitList = commitList,
-                    logViewModel = logViewModel,
-                    graphWidth = graphWidth,
-                    commitsLimit = logStatus.commitsLimit,
-                    onMerge = { ref ->
-                        logViewModel.mergeBranch(ref)
-                    },
-                    onRebase = { ref ->
-                        logViewModel.rebaseBranch(ref)
-                    },
-                    onShowLogDialog = { dialog ->
-                        logViewModel.showDialog(dialog)
-                    }
-                )
 
-                val density = LocalDensity.current.density
-                DividerLog(
-                    modifier = Modifier.draggable(
-                        rememberDraggableState {
-                            graphPadding += it / density
-                            logViewModel.graphPadding = graphPadding
-                        }, Orientation.Horizontal
-                    ),
-                    graphWidth = graphWidth,
-                )
+            // Scrollbar used to scroll horizontally the graph nodes
+            // Added after every component to have the highest priority when clicking
+            HorizontalScrollbar(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .width(graphWidth)
+                    .padding(start = 4.dp, bottom = 4.dp), style = LocalScrollbarStyle.current.copy(
+                    unhoverColor = MaterialTheme.colors.scrollbarNormal,
+                    hoverColor = MaterialTheme.colors.scrollbarHover,
+                ),
+                adapter = rememberScrollbarAdapter(horizontalScrollState)
+            )
 
-                // Scrollbar used to scroll horizontally the graph nodes
-                // Added after every component to have the highest priority when clicking
-                HorizontalScrollbar(
+            val isFirstItemVisible by remember {
+                derivedStateOf { verticalScrollState.firstVisibleItemIndex > 0 }
+            }
+
+            if (isFirstItemVisible) {
+                Box(
                     modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .width(graphWidth)
-                        .padding(start = 4.dp, bottom = 4.dp), style = LocalScrollbarStyle.current.copy(
-                        unhoverColor = MaterialTheme.colors.scrollbarNormal,
-                        hoverColor = MaterialTheme.colors.scrollbarHover,
-                    ),
-                    adapter = rememberScrollbarAdapter(horizontalScrollState)
-                )
-
-                val isFirstItemVisible by remember {
-                    derivedStateOf { verticalScrollState.firstVisibleItemIndex > 0 }
-                }
-
-                if (isFirstItemVisible) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = 16.dp)
-                            .clip(RoundedCornerShape(50))
-                            .handMouseClickable {
-                                scope.launch {
-                                    verticalScrollState.scrollToItem(0)
-                                }
+                        .align(Alignment.TopCenter)
+                        .padding(top = 16.dp)
+                        .clip(RoundedCornerShape(50))
+                        .handMouseClickable {
+                            scope.launch {
+                                verticalScrollState.scrollToItem(0)
                             }
-                            .background(MaterialTheme.colors.primary)
-                            .padding(vertical = 4.dp, horizontal = 8.dp),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                painterResource("align_top.svg"),
-                                contentDescription = null,
-                                tint = MaterialTheme.colors.onPrimary,
-                                modifier = Modifier.size(20.dp),
-                            )
-
-                            Text(
-                                text = "Scroll to top",
-                                modifier = Modifier.padding(start = 8.dp),
-                                color = MaterialTheme.colors.onPrimary,
-                                style = MaterialTheme.typography.body2,
-                            )
                         }
+                        .background(MaterialTheme.colors.primary)
+                        .padding(vertical = 4.dp, horizontal = 8.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            painterResource(AppIcons.ALIGN_TOP),
+                            contentDescription = null,
+                            tint = MaterialTheme.colors.onPrimary,
+                            modifier = Modifier.size(20.dp),
+                        )
+
+                        Text(
+                            text = "Scroll to top",
+                            modifier = Modifier.padding(start = 8.dp),
+                            color = MaterialTheme.colors.onPrimary,
+                            maxLines = 1,
+                            style = MaterialTheme.typography.body2,
+                        )
                     }
                 }
             }
@@ -271,7 +325,7 @@ suspend fun scrollToCommit(
     if (index >= 0) verticalScrollState.scrollToItem(index)
 }
 
-suspend fun scrollToUncommitedChanges(
+suspend fun scrollToUncommittedChanges(
     verticalScrollState: LazyListState,
     commitList: GraphCommitList,
 ) {
@@ -295,7 +349,7 @@ fun SearchFilter(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(64.dp),
+            .height(56.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TextField(
@@ -312,14 +366,14 @@ fun SearchFilter(
                 .focusRequester(textFieldFocusRequester)
                 .onPreviewKeyEvent { keyEvent ->
                     when {
-                        keyEvent.matchesBinding(KeybindingOption.SIMPLE_ACCEPT) && keyEvent.type == KeyEventType.KeyUp -> {
+                        keyEvent.matchesBinding(KeybindingOption.SIMPLE_ACCEPT) -> {
                             scope.launch {
                                 logViewModel.selectNextFilterCommit()
                             }
                             true
                         }
 
-                        keyEvent.matchesBinding(KeybindingOption.EXIT) && keyEvent.type == KeyEventType.KeyUp -> {
+                        keyEvent.matchesBinding(KeybindingOption.EXIT) -> {
                             logViewModel.closeSearch()
                             true
                         }
@@ -379,10 +433,11 @@ fun SearchFilter(
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
-fun MessagesList(
+fun CommitsList(
     scrollState: LazyListState,
-    hasUncommitedChanges: Boolean,
+    hasUncommittedChanges: Boolean,
     searchFilter: List<GraphNode>?,
     selectedCommit: RevCommit?,
     logStatus: LogStatus.Loaded,
@@ -395,31 +450,55 @@ fun MessagesList(
     onRebase: (Ref) -> Unit,
     onShowLogDialog: (LogDialog) -> Unit,
     graphWidth: Dp,
+    horizontalScrollState: ScrollState,
 ) {
+    val scope = rememberCoroutineScope()
+
     ScrollableLazyColumn(
         state = scrollState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            // The underlying composable assigned to the horizontal scroll bar won't be receiving the scroll events
+            // because the commits list will consume the events, so this code tries to scroll manually when it detects
+            // horizontal scrolling
+            .onPointerEvent(PointerEventType.Scroll) { pointerEvent ->
+                scope.launch {
+                    val xScroll = pointerEvent.changes.map { it.scrollDelta.x }.sum()
+                    horizontalScrollState.scrollBy(xScroll * HORIZONTAL_SCROLL_PIXELS_MULTIPLIER)
+                }
+            },
     ) {
         if (
-            hasUncommitedChanges ||
+            hasUncommittedChanges ||
             repositoryState.isMerging ||
             repositoryState.isRebasing ||
             repositoryState.isCherryPicking
         ) {
             item {
-                UncommitedChangesLine(
-                    graphWidth = graphWidth,
-                    isSelected = selectedItem == SelectedItem.UncommitedChanges,
-                    statusSummary = logStatus.statusSummary,
-                    repositoryState = repositoryState,
-                    onUncommitedChangesSelected = {
-                        logViewModel.selectUncommitedChanges()
-                    }
-                )
+                Box(
+                    modifier = Modifier.height(LINE_HEIGHT.dp)
+                        .clipToBounds()
+                        .fillMaxWidth()
+                        .clickable { logViewModel.selectUncommittedChanges() }
+                ) {
+                    UncommittedChangesGraphNode(
+                        hasPreviousCommits = commitList.isNotEmpty(),
+                        isSelected = selectedItem is SelectedItem.UncommittedChanges,
+                        modifier = Modifier.offset(-horizontalScrollState.value.dp)
+                    )
+
+                    UncommittedChangesLine(
+                        graphWidth = graphWidth,
+                        isSelected = selectedItem == SelectedItem.UncommittedChanges,
+                        statusSummary = logStatus.statusSummary,
+                        repositoryState = repositoryState,
+                    )
+                }
             }
         }
-        // Setting a key makes the graph preserve the scroll position when a new line has been added on top (uncommited changes)
-        // Therefore, after popping a stash, the uncommited changes wouldn't be visible and requires the user scrolling.
+
+        // Setting a key makes the graph preserve the scroll position when a new line has been added on top (uncommitted changes)
+        // Therefore, after popping a stash, the uncommitted changes wouldn't be visible and requires the user scrolling.
         items(items = commitList) { graphNode ->
             CommitLine(
                 graphWidth = graphWidth,
@@ -428,6 +507,7 @@ fun MessagesList(
                 isSelected = selectedCommit?.name == graphNode.name,
                 currentBranch = logStatus.currentBranch,
                 matchesSearchFilter = searchFilter?.contains(graphNode),
+                horizontalScrollState = horizontalScrollState,
                 showCreateNewBranch = { onShowLogDialog(LogDialog.NewBranch(graphNode)) },
                 showCreateNewTag = { onShowLogDialog(LogDialog.NewTag(graphNode)) },
                 resetBranch = { onShowLogDialog(LogDialog.ResetBranch(graphNode)) },
@@ -435,6 +515,10 @@ fun MessagesList(
                 onRebaseBranch = onRebase,
                 onRebaseInteractive = { logViewModel.rebaseInteractive(graphNode) },
                 onRevCommitSelected = { logViewModel.selectLogLine(graphNode) },
+                onChangeDefaultUpstreamBranch = { onShowLogDialog(LogDialog.ChangeDefaultBranch(it)) },
+                onDeleteStash = { logViewModel.deleteStash(graphNode) },
+                onApplyStash = { logViewModel.applyStash(graphNode) },
+                onPopStash = { logViewModel.popStash(graphNode) },
             )
         }
 
@@ -459,101 +543,6 @@ fun MessagesList(
 
         item {
             Box(modifier = Modifier.height(LOG_BOTTOM_PADDING.dp))
-        }
-    }
-}
-
-@Composable
-fun GraphList(
-    commitList: GraphCommitList,
-    horizontalScrollState: ScrollState,
-    verticalScrollState: LazyListState,
-    graphWidth: Dp,
-    hasUncommitedChanges: Boolean,
-    selectedCommit: RevCommit?,
-    selectedItem: SelectedItem,
-    commitsLimit: Int,
-    repositoryState: RepositoryState,
-) {
-    val maxLinePosition = if (commitList.isNotEmpty())
-        commitList.maxLine
-    else
-        MIN_GRAPH_LANES
-
-    var graphRealWidth = ((maxLinePosition + MARGIN_GRAPH_LANES) * LANE_WIDTH).dp
-
-    // Using remember(graphRealWidth, graphWidth) makes the selected background color glitch when changing tabs
-    if (graphRealWidth < graphWidth) {
-        graphRealWidth = graphWidth
-    }
-
-    Box(
-        Modifier
-            .width(graphWidth)
-            .fillMaxHeight()
-    ) {
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .horizontalScroll(horizontalScrollState)
-                .padding(bottom = 8.dp)
-        ) {
-            LazyColumn(
-                state = verticalScrollState, modifier = Modifier.width(graphRealWidth)
-            ) {
-                if (
-                    hasUncommitedChanges ||
-                    repositoryState.isMerging ||
-                    repositoryState.isRebasing ||
-                    repositoryState.isCherryPicking
-                ) {
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .height(LINE_HEIGHT.dp)
-                                .fillMaxWidth(),
-                        ) {
-                            UncommitedChangesGraphNode(
-                                modifier = Modifier.fillMaxSize(),
-                                hasPreviousCommits = commitList.isNotEmpty(),
-                                isSelected = selectedItem is SelectedItem.UncommitedChanges,
-                            )
-                        }
-                    }
-                }
-
-                items(items = commitList) { graphNode ->
-                    val nodeColor = colors[graphNode.lane.position % colors.size]
-
-                    Row(
-                        modifier = Modifier
-                            .height(LINE_HEIGHT.dp)
-                            .fillMaxWidth(),
-                    ) {
-                        CommitsGraphLine(
-                            modifier = Modifier.fillMaxSize(),
-                            plotCommit = graphNode,
-                            nodeColor = nodeColor,
-                            isSelected = selectedCommit?.name == graphNode.name,
-                        )
-                    }
-                }
-
-                // Spacing when the commits limit is present
-                if (commitsLimit >= 0 && commitsLimit <= commitList.count()) {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .height(LINE_HEIGHT.dp),
-                        )
-                    }
-                }
-
-                item {
-                    Box(modifier = Modifier.height(LOG_BOTTOM_PADDING.dp))
-                }
-            }
         }
     }
 }
@@ -585,6 +574,14 @@ fun LogDialogs(
         })
 
         LogDialog.None -> {
+        }
+
+        is LogDialog.ChangeDefaultBranch -> {
+            SetDefaultUpstreamBranchDialog(
+                viewModel = gitnuroDynamicViewModel(),
+                branch = showLogDialog.ref,
+                onClose = { onResetShowLogDialog() },
+            )
         }
     }
 }
@@ -620,7 +617,7 @@ fun GraphHeader(
             SimpleDividerLog(
                 modifier = Modifier.draggable(
                     rememberDraggableState {
-                        onPaddingChange(it * density) // Multiply by density for screens with scaling > 1
+                        onPaddingChange(it / density) // Divide by density for screens with scaling > 1
                     }, Orientation.Horizontal
                 ),
             )
@@ -642,7 +639,7 @@ fun GraphHeader(
                 onClick = onShowSearch
             ) {
                 Icon(
-                    Icons.Default.Search,
+                    painterResource(AppIcons.SEARCH),
                     modifier = Modifier.size(18.dp),
                     contentDescription = null,
                     tint = MaterialTheme.colors.onBackground,
@@ -653,18 +650,15 @@ fun GraphHeader(
 }
 
 @Composable
-fun UncommitedChangesLine(
+fun UncommittedChangesLine(
     graphWidth: Dp,
     isSelected: Boolean,
     repositoryState: RepositoryState,
     statusSummary: StatusSummary,
-    onUncommitedChangesSelected: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .height(40.dp)
-            .fillMaxWidth()
-            .handMouseClickable { onUncommitedChangesSelected() }
             .padding(start = graphWidth)
             .backgroundIf(isSelected, MaterialTheme.colors.backgroundSelected)
             .padding(DIVIDER_WIDTH.dp),
@@ -675,7 +669,7 @@ fun UncommitedChangesLine(
             repositoryState.isMerging -> "Pending changes to merge"
             repositoryState.isCherryPicking -> "Pending changes to cherry-pick"
             repositoryState.isReverting -> "Pending changes to revert"
-            else -> "Uncommited changes"
+            else -> "Uncommitted changes"
         }
 
         Text(
@@ -755,9 +749,8 @@ fun SummaryEntry(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun CommitLine(
+private fun CommitLine(
     graphWidth: Dp,
     logViewModel: LogViewModel,
     graphNode: GraphNode,
@@ -767,64 +760,109 @@ fun CommitLine(
     showCreateNewBranch: () -> Unit,
     showCreateNewTag: () -> Unit,
     resetBranch: () -> Unit,
+    onApplyStash: () -> Unit,
+    onPopStash: () -> Unit,
+    onDeleteStash: () -> Unit,
     onMergeBranch: (Ref) -> Unit,
     onRebaseBranch: (Ref) -> Unit,
     onRevCommitSelected: () -> Unit,
     onRebaseInteractive: () -> Unit,
+    onChangeDefaultUpstreamBranch: (Ref) -> Unit,
+    horizontalScrollState: ScrollState,
 ) {
+    val isLastCommitOfCurrentBranch = currentBranch?.objectId?.name == graphNode.id.name
+
     ContextMenu(
         items = {
-            logContextMenu(
-                onCheckoutCommit = { logViewModel.checkoutCommit(graphNode) },
-                onCreateNewBranch = showCreateNewBranch,
-                onCreateNewTag = showCreateNewTag,
-                onRevertCommit = { logViewModel.revertCommit(graphNode) },
-                onCherryPickCommit = { logViewModel.cherrypickCommit(graphNode) },
-                onRebaseInteractive = onRebaseInteractive,
-                onResetBranch = { resetBranch() },
-            )
+            if (graphNode.isStash) {
+                stashesContextMenuItems(
+                    onApply = onApplyStash,
+                    onPop = onPopStash,
+                    onDelete = onDeleteStash,
+                )
+            } else {
+                logContextMenu(
+                    onCheckoutCommit = { logViewModel.checkoutCommit(graphNode) },
+                    onCreateNewBranch = showCreateNewBranch,
+                    onCreateNewTag = showCreateNewTag,
+                    onRevertCommit = { logViewModel.revertCommit(graphNode) },
+                    onCherryPickCommit = { logViewModel.cherrypickCommit(graphNode) },
+                    onRebaseInteractive = onRebaseInteractive,
+                    onResetBranch = { resetBranch() },
+                    isLastCommit = isLastCommitOfCurrentBranch
+                )
+            }
         },
     ) {
         Box(
             modifier = Modifier
-                .fastClickable(graphNode, logViewModel) { onRevCommitSelected() }
-                .padding(start = graphWidth)
-                .height(LINE_HEIGHT.dp)
-                .backgroundIf(isSelected, MaterialTheme.colors.backgroundSelected)
-
+                .clickable { onRevCommitSelected() }
         ) {
+            val nodeColor = colors[graphNode.lane.position % colors.size]
 
-            if (matchesSearchFilter == true) {
-                Box(
+            Box {
+                Row(
                     modifier = Modifier
-                        .padding(start = DIVIDER_WIDTH.dp)
-                        .background(MaterialTheme.colors.secondary)
-                        .fillMaxHeight()
-                        .width(4.dp)
-                )
+                        .clipToBounds()
+                        .height(LINE_HEIGHT.dp)
+                        .fillMaxWidth()
+                        .offset(-horizontalScrollState.value.dp)
+                ) {
+                    CommitsGraph(
+                        modifier = Modifier
+                            .fillMaxHeight(),
+                        plotCommit = graphNode,
+                        nodeColor = nodeColor,
+                        isSelected = isSelected,
+                    )
+                }
             }
 
-            Row(
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(end = 4.dp),
+                    .padding(start = graphWidth)
+                    .height(LINE_HEIGHT.dp)
+                    .background(MaterialTheme.colors.background)
+                    .backgroundIf(isSelected, MaterialTheme.colors.backgroundSelected)
             ) {
-                val nodeColor = colors[graphNode.lane.position % colors.size]
-                CommitMessage(
-                    commit = graphNode,
-                    refs = graphNode.refs,
-                    nodeColor = nodeColor,
-                    matchesSearchFilter = matchesSearchFilter,
-                    currentBranch = currentBranch,
-                    onCheckoutRef = { ref -> logViewModel.checkoutRef(ref) },
-                    onMergeBranch = { ref -> onMergeBranch(ref) },
-                    onDeleteBranch = { ref -> logViewModel.deleteBranch(ref) },
-                    onDeleteRemoteBranch = { ref -> logViewModel.deleteRemoteBranch(ref) },
-                    onDeleteTag = { ref -> logViewModel.deleteTag(ref) },
-                    onRebaseBranch = { ref -> onRebaseBranch(ref) },
-                    onPushRemoteBranch = { ref -> logViewModel.pushToRemoteBranch(ref) },
-                    onPullRemoteBranch = { ref -> logViewModel.pullFromRemoteBranch(ref) },
-                )
+
+                if (matchesSearchFilter == true) {
+                    Box(
+                        modifier = Modifier
+                            .padding(start = DIVIDER_WIDTH.dp)
+                            .background(MaterialTheme.colors.secondary)
+                            .fillMaxHeight()
+                            .width(4.dp)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(end = 4.dp),
+                ) {
+                    CommitMessage(
+                        commit = graphNode,
+                        nodeColor = nodeColor,
+                        matchesSearchFilter = matchesSearchFilter,
+                        currentBranch = currentBranch,
+                        onCheckoutRef = { ref ->
+                            if (ref.isRemote && ref.isBranch) {
+                                logViewModel.checkoutRemoteBranch(ref)
+                            } else {
+                                logViewModel.checkoutRef(ref)
+                            }
+                        },
+                        onMergeBranch = { ref -> onMergeBranch(ref) },
+                        onDeleteBranch = { ref -> logViewModel.deleteBranch(ref) },
+                        onDeleteRemoteBranch = { ref -> logViewModel.deleteRemoteBranch(ref) },
+                        onDeleteTag = { ref -> logViewModel.deleteTag(ref) },
+                        onRebaseBranch = { ref -> onRebaseBranch(ref) },
+                        onPushRemoteBranch = { ref -> logViewModel.pushToRemoteBranch(ref) },
+                        onPullRemoteBranch = { ref -> logViewModel.pullFromRemoteBranch(ref) },
+                        onChangeDefaultUpstreamBranch = { ref -> onChangeDefaultUpstreamBranch(ref) },
+                    )
+                }
             }
         }
     }
@@ -832,8 +870,7 @@ fun CommitLine(
 
 @Composable
 fun CommitMessage(
-    commit: RevCommit,
-    refs: List<Ref>,
+    commit: GraphNode,
     currentBranch: Ref?,
     nodeColor: Color,
     matchesSearchFilter: Boolean?,
@@ -845,42 +882,50 @@ fun CommitMessage(
     onDeleteTag: (ref: Ref) -> Unit,
     onPushRemoteBranch: (ref: Ref) -> Unit,
     onPullRemoteBranch: (ref: Ref) -> Unit,
+    onChangeDefaultUpstreamBranch: (ref: Ref) -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize()
+            .hoverable(
+                // This modifier is added just to prevent committer tooltip is shown then it is underneath this message
+                remember { MutableInteractionSource() },
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
             modifier = Modifier.padding(start = 16.dp)
         ) {
-            refs.sortedWith { ref1, ref2 ->
-                if (ref1.isSameBranch(currentBranch)) {
-                    -1
-                } else {
-                    ref1.name.compareTo(ref2.name)
-                }
-            }.forEach { ref ->
-                if (ref.isTag) {
-                    TagChip(
-                        ref = ref,
-                        color = nodeColor,
-                        onCheckoutTag = { onCheckoutRef(ref) },
-                        onDeleteTag = { onDeleteTag(ref) },
-                    )
-                } else if (ref.isBranch) {
-                    BranchChip(
-                        ref = ref,
-                        color = nodeColor,
-                        currentBranch = currentBranch,
-                        isCurrentBranch = ref.isSameBranch(currentBranch),
-                        onCheckoutBranch = { onCheckoutRef(ref) },
-                        onMergeBranch = { onMergeBranch(ref) },
-                        onDeleteBranch = { onDeleteBranch(ref) },
-                        onDeleteRemoteBranch = { onDeleteRemoteBranch(ref) },
-                        onRebaseBranch = { onRebaseBranch(ref) },
-                        onPullRemoteBranch = { onPullRemoteBranch(ref) },
-                        onPushRemoteBranch = { onPushRemoteBranch(ref) },
-                    )
+            if (!commit.isStash) {
+                commit.refs.sortedWith { ref1, ref2 ->
+                    if (ref1.isSameBranch(currentBranch)) {
+                        -1
+                    } else {
+                        ref1.name.compareTo(ref2.name)
+                    }
+                }.forEach { ref ->
+                    if (ref.isTag) {
+                        TagChip(
+                            ref = ref,
+                            color = nodeColor,
+                            onCheckoutTag = { onCheckoutRef(ref) },
+                            onDeleteTag = { onDeleteTag(ref) },
+                        )
+                    } else if (ref.isBranch) {
+                        BranchChip(
+                            ref = ref,
+                            color = nodeColor,
+                            currentBranch = currentBranch,
+                            isCurrentBranch = ref.isSameBranch(currentBranch),
+                            onCheckoutBranch = { onCheckoutRef(ref) },
+                            onMergeBranch = { onMergeBranch(ref) },
+                            onDeleteBranch = { onDeleteBranch(ref) },
+                            onDeleteRemoteBranch = { onDeleteRemoteBranch(ref) },
+                            onRebaseBranch = { onRebaseBranch(ref) },
+                            onPullRemoteBranch = { onPullRemoteBranch(ref) },
+                            onPushRemoteBranch = { onPushRemoteBranch(ref) },
+                            onChangeDefaultUpstreamBranch = { onChangeDefaultUpstreamBranch(ref) },
+                        )
+                    }
                 }
             }
         }
@@ -918,7 +963,7 @@ fun DividerLog(modifier: Modifier, graphWidth: Dp) {
             .padding(start = graphWidth)
             .width(DIVIDER_WIDTH.dp)
             .then(modifier)
-            .pointerHoverIcon(PointerIcon(Cursor(Cursor.E_RESIZE_CURSOR)))
+            .pointerHoverIcon(resizePointerIconEast)
     ) {
         Box(
             modifier = Modifier
@@ -937,7 +982,7 @@ fun SimpleDividerLog(modifier: Modifier) {
 
 
 @Composable
-fun CommitsGraphLine(
+fun CommitsGraph(
     modifier: Modifier = Modifier,
     plotCommit: GraphNode,
     nodeColor: Color,
@@ -954,7 +999,10 @@ fun CommitsGraphLine(
     Box(
         modifier = modifier
             .backgroundIf(isSelected, MaterialTheme.colors.backgroundSelected)
+            .fillMaxHeight(),
+        contentAlignment = Alignment.CenterStart,
     ) {
+
         val itemPosition = plotCommit.lane.position
 
         Canvas(
@@ -1024,22 +1072,46 @@ fun CommitNode(
     plotCommit: GraphNode,
     color: Color,
 ) {
-    Box(
-        modifier = modifier
-            .size(30.dp)
-            .border(2.dp, color, shape = CircleShape)
-            .clip(CircleShape)
-    ) {
-        AvatarImage(
-            modifier = Modifier.fillMaxSize(),
-            personIdent = plotCommit.authorIdent,
-            color = color,
-        )
+    val author = plotCommit.authorIdent
+    if (plotCommit.isStash) {
+        Box(
+            modifier = modifier
+                .size(30.dp)
+                .border(2.dp, color, shape = CircleShape)
+                .clip(CircleShape)
+                .background(MaterialTheme.colors.background),
+            contentAlignment = Alignment.Center,
+        ) {
+            Image(
+                painterResource(AppIcons.STASH),
+                modifier = Modifier.size(20.dp),
+                contentDescription = null,
+                colorFilter = ColorFilter.tint(color),
+            )
+        }
+    } else {
+        InstantTooltip(
+            "${author.name} <${author.emailAddress}>",
+            position = InstantTooltipPosition.RIGHT,
+        ) {
+            Box(
+                modifier = modifier
+                    .size(30.dp)
+                    .border(2.dp, color, shape = CircleShape)
+                    .clip(CircleShape)
+            ) {
+                AvatarImage(
+                    modifier = Modifier.fillMaxSize(),
+                    personIdent = plotCommit.authorIdent,
+                    color = color,
+                )
+            }
+        }
     }
 }
 
 @Composable
-fun UncommitedChangesGraphNode(
+fun UncommittedChangesGraphNode(
     modifier: Modifier = Modifier,
     hasPreviousCommits: Boolean,
     isSelected: Boolean,
@@ -1088,6 +1160,7 @@ fun BranchChip(
     onRebaseBranch: () -> Unit,
     onPushRemoteBranch: () -> Unit,
     onPullRemoteBranch: () -> Unit,
+    onChangeDefaultUpstreamBranch: () -> Unit,
     color: Color,
 ) {
     val contextMenuItemsList = {
@@ -1103,6 +1176,7 @@ fun BranchChip(
             onRebaseBranch = onRebaseBranch,
             onPushToRemoteBranch = onPushRemoteBranch,
             onPullFromRemoteBranch = onPullRemoteBranch,
+            onChangeDefaultUpstreamBranch = onChangeDefaultUpstreamBranch,
         )
     }
 
@@ -1110,7 +1184,7 @@ fun BranchChip(
     if (isCurrentBranch) {
         endingContent = {
             Icon(
-                painter = painterResource("location.svg"),
+                painter = painterResource(AppIcons.LOCATION),
                 contentDescription = null,
                 modifier = Modifier.padding(end = 6.dp),
                 tint = MaterialTheme.colors.primaryVariant,
@@ -1122,7 +1196,7 @@ fun BranchChip(
         modifier = modifier,
         color = color,
         ref = ref,
-        icon = "branch.svg",
+        icon = AppIcons.BRANCH,
         onCheckoutRef = onCheckoutBranch,
         contextMenuItemsList = contextMenuItemsList,
         endingContent = endingContent,
@@ -1148,7 +1222,7 @@ fun TagChip(
     RefChip(
         modifier,
         ref,
-        "tag.svg",
+        AppIcons.TAG,
         onCheckoutRef = onCheckoutTag,
         contextMenuItemsList = contextMenuItemsList,
         color = color,

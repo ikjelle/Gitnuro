@@ -1,6 +1,6 @@
 package com.jetpackduba.gitnuro.git.rebase
 
-import com.jetpackduba.gitnuro.exceptions.UncommitedChangesDetectedException
+import com.jetpackduba.gitnuro.exceptions.UncommittedChangesDetectedException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.eclipse.jgit.api.Git
@@ -16,8 +16,14 @@ class ResumeRebaseInteractiveUseCase @Inject constructor() {
                 .setOperation(RebaseCommand.Operation.PROCESS_STEPS)
                 .call()
 
-            if (rebaseResult.status == RebaseResult.Status.FAILED) {
-                throw UncommitedChangesDetectedException("Rebase interactive failed.")
+
+            when (rebaseResult.status) {
+                RebaseResult.Status.FAILED -> throw UncommittedChangesDetectedException("Rebase interactive failed.")
+                RebaseResult.Status.UNCOMMITTED_CHANGES, RebaseResult.Status.CONFLICTS -> throw UncommittedChangesDetectedException(
+                    "You can't have uncommitted changes before starting a rebase interactive"
+                )
+
+                else -> {}
             }
         }
 }

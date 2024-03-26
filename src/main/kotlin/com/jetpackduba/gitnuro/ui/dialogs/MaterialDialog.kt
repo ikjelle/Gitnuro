@@ -20,10 +20,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.*
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import com.jetpackduba.gitnuro.keybindings.KeybindingOption
 import com.jetpackduba.gitnuro.keybindings.matchesBinding
 import com.jetpackduba.gitnuro.theme.dialogOverlay
@@ -38,7 +41,9 @@ fun MaterialDialog(
     content: @Composable () -> Unit
 ) {
     Popup(
-        focusable = true,
+        properties = PopupProperties(
+            focusable = true,
+        ),
         popupPositionProvider = object : PopupPositionProvider {
             override fun calculatePosition(
                 anchorBounds: IntRect,
@@ -62,7 +67,7 @@ fun MaterialDialog(
                 .focusRequester(focusRequester)
                 .focusable()
                 .onPreviewKeyEvent { keyEvent ->
-                    if (keyEvent.matchesBinding(KeybindingOption.EXIT)) {
+                    if (keyEvent.matchesBinding(KeybindingOption.EXIT) && keyEvent.type == KeyEventType.KeyDown) {
                         onCloseRequested()
                         true
                     } else
@@ -72,8 +77,8 @@ fun MaterialDialog(
         ) {
             Box(
                 modifier = Modifier
-                    .border(1.dp, MaterialTheme.colors.onBackground.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
-                    .clip(RoundedCornerShape(16.dp))
+                    .border(1.dp, MaterialTheme.colors.onBackground.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(8.dp))
                     .background(background)
                     .padding(
                         horizontal = paddingHorizontal,

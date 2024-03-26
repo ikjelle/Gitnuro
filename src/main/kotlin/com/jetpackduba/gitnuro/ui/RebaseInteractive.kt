@@ -1,31 +1,53 @@
 package com.jetpackduba.gitnuro.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.jetpackduba.gitnuro.theme.textButtonColors
+import com.jetpackduba.gitnuro.AppIcons
+import com.jetpackduba.gitnuro.extensions.backgroundIf
+import com.jetpackduba.gitnuro.extensions.handOnHover
+import com.jetpackduba.gitnuro.theme.backgroundSelected
+import com.jetpackduba.gitnuro.theme.onBackgroundSecondary
 import com.jetpackduba.gitnuro.ui.components.AdjustableOutlinedTextField
 import com.jetpackduba.gitnuro.ui.components.PrimaryButton
 import com.jetpackduba.gitnuro.ui.components.ScrollableLazyColumn
-import com.jetpackduba.gitnuro.viewmodels.RebaseInteractiveState
+import com.jetpackduba.gitnuro.ui.components.gitnuroViewModel
+import com.jetpackduba.gitnuro.ui.drag_sorting.VerticalDraggableItem
+import com.jetpackduba.gitnuro.ui.drag_sorting.rememberVerticalDragDropState
+import com.jetpackduba.gitnuro.ui.drag_sorting.verticalDragContainer
+import com.jetpackduba.gitnuro.viewmodels.RebaseAction
 import com.jetpackduba.gitnuro.viewmodels.RebaseInteractiveViewModel
-import org.eclipse.jgit.lib.RebaseTodoLine
-import org.eclipse.jgit.lib.RebaseTodoLine.Action
+import com.jetpackduba.gitnuro.viewmodels.RebaseInteractiveViewState
+import com.jetpackduba.gitnuro.viewmodels.RebaseLine
 
 @Composable
 fun RebaseInteractive(
-    rebaseInteractiveViewModel: RebaseInteractiveViewModel,
+    rebaseInteractiveViewModel: RebaseInteractiveViewModel = gitnuroViewModel(),
 ) {
     val rebaseState = rebaseInteractiveViewModel.rebaseState.collectAsState()
     val rebaseStateValue = rebaseState.value
+    val selectedItem = rebaseInteractiveViewModel.selectedItem.collectAsState().value
+
+    LaunchedEffect(rebaseInteractiveViewModel) {
+        rebaseInteractiveViewModel.loadRebaseInteractiveData()
+    }
 
     Box(
         modifier = Modifier
@@ -33,55 +55,95 @@ fun RebaseInteractive(
             .fillMaxSize(),
     ) {
         when (rebaseStateValue) {
-            is RebaseInteractiveState.Failed -> {}
-            is RebaseInteractiveState.Loaded -> {
+            is RebaseInteractiveViewState.Failed -> {}
+            is RebaseInteractiveViewState.Loaded -> {
                 RebaseStateLoaded(
                     rebaseInteractiveViewModel,
                     rebaseStateValue,
+                    selectedItem,
+                    onFocusLine = {
+                        if (
+                            selectedItem !is SelectedItem.Commit ||
+                            !selectedItem.revCommit.id.startsWith(it.commit)
+                        ) {
+                            rebaseInteractiveViewModel.selectLine(it)
+                        }
+                    },
                     onCancel = {
                         rebaseInteractiveViewModel.cancel()
                     },
+                    onMoveCommit = { from, to ->
+                        rebaseInteractiveViewModel.moveCommit(from, to)
+                    }
                 )
             }
 
-            RebaseInteractiveState.Loading -> {
+            RebaseInteractiveViewState.Loading -> {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RebaseStateLoaded(
     rebaseInteractiveViewModel: RebaseInteractiveViewModel,
-    rebaseState: RebaseInteractiveState.Loaded,
+    rebaseState: RebaseInteractiveViewState.Loaded,
+    selectedItem: SelectedItem,
+    onFocusLine: (RebaseLine) -> Unit,
     onCancel: () -> Unit,
+    onMoveCommit: (from: Int, to: Int) -> Unit,
 ) {
     val stepsList = rebaseState.stepsList
 
     Column(
         modifier = Modifier.fillMaxSize()
+            .clip(RoundedCornerShape(4.dp))
+            .background(MaterialTheme.colors.background)
     ) {
         Text(
             text = "Rebase interactive",
             color = MaterialTheme.colors.onBackground,
-            modifier = Modifier.padding(start = 16.dp, top = 16.dp),
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp),
             fontSize = 20.sp,
         )
 
-        ScrollableLazyColumn(modifier = Modifier.weight(1f)) {
-            items(stepsList) { rebaseTodoLine ->
-                RebaseCommit(
-                    rebaseLine = rebaseTodoLine,
-                    message = rebaseState.messages[rebaseTodoLine.commit.name()],
-                    isFirst = stepsList.first() == rebaseTodoLine,
-                    onActionChanged = { newAction ->
-                        rebaseInteractiveViewModel.onCommitActionChanged(rebaseTodoLine.commit, newAction)
-                    },
-                    onMessageChanged = { newMessage ->
-                        rebaseInteractiveViewModel.onCommitMessageChanged(rebaseTodoLine.commit, newMessage)
-                    },
-                )
+        val listState = rememberLazyListState()
+        val state = rememberVerticalDragDropState(listState) { fromIndex, toIndex ->
+            println("P0: $fromIndex\nP1: $toIndex")
+            onMoveCommit(fromIndex, toIndex)
+        }
+
+        ScrollableLazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .verticalDragContainer(state, onDraggedItem = {
+                    println("OnDragItem $it")
+                }),
+            state = listState,
+        ) {
+            itemsIndexed(
+                stepsList,
+                key = { _, line -> line.commit },
+            ) { index, rebaseTodoLine ->
+                VerticalDraggableItem(state, index) {
+                    RebaseCommit(
+                        rebaseLine = rebaseTodoLine,
+                        message = rebaseState.messages[rebaseTodoLine.commit.name()],
+                        isSelected = selectedItem is SelectedItem.Commit && selectedItem.revCommit.id.startsWith(
+                            rebaseTodoLine.commit
+                        ),
+                        isFirst = stepsList.first() == rebaseTodoLine,
+                        onFocusLine = { onFocusLine(rebaseTodoLine) },
+                        onActionChanged = { newAction ->
+                            rebaseInteractiveViewModel.onCommitActionChanged(rebaseTodoLine.commit, newAction)
+                        },
+                        onMessageChanged = { newMessage ->
+                            rebaseInteractiveViewModel.onCommitMessageChanged(rebaseTodoLine.commit, newMessage)
+                        },
+                    )
+                }
             }
         }
 
@@ -99,7 +161,7 @@ fun RebaseStateLoaded(
             )
             PrimaryButton(
                 modifier = Modifier.padding(end = 16.dp),
-                enabled = stepsList.any { it.action != Action.PICK },
+                enabled = true, // TODO Moving commits may also affect stepsList.any { it.rebaseAction != RebaseAction.PICK },
                 onClick = {
                     rebaseInteractiveViewModel.continueRebaseInteractive()
                 },
@@ -111,15 +173,19 @@ fun RebaseStateLoaded(
 
 @Composable
 fun RebaseCommit(
-    rebaseLine: RebaseTodoLine,
+    rebaseLine: RebaseLine,
     isFirst: Boolean,
+    isSelected: Boolean,
     message: String?,
-    onActionChanged: (Action) -> Unit,
+    onFocusLine: () -> Unit,
+    onActionChanged: (RebaseAction) -> Unit,
     onMessageChanged: (String) -> Unit,
 ) {
-    val action = rebaseLine.action
+    val action = rebaseLine.rebaseAction
+    val focusRequester = remember { FocusRequester() }
+
     var newMessage by remember(rebaseLine.commit.name(), action) {
-        if (action == Action.REWORD) {
+        if (action == RebaseAction.REWORD) {
             mutableStateOf(message ?: rebaseLine.shortMessage) /* if reword, use the value from the map (if possible)*/
         } else
             mutableStateOf(rebaseLine.shortMessage) // If it's not reword, use the original shortMessage
@@ -127,28 +193,50 @@ fun RebaseCommit(
 
     Row(
         modifier = Modifier
-            .padding(horizontal = 16.dp, vertical = 8.dp)
             .height(IntrinsicSize.Min)
             .fillMaxWidth()
+            .onFocusEvent {
+                if (it.hasFocus && !isSelected) {
+                    onFocusLine()
+                    focusRequester.requestFocus()
+                }
+            }
+            .clickable {
+                onFocusLine()
+            }
+            .backgroundIf(isSelected, MaterialTheme.colors.backgroundSelected)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        Icon(
+            painterResource(AppIcons.DRAG),
+            contentDescription = "Drag commit",
+            tint = MaterialTheme.colors.onBackground,
+            modifier = Modifier.size(24.dp)
+                .handOnHover(),
+        )
+
         ActionDropdown(
-            rebaseLine.action,
+            action,
             isFirst = isFirst,
+            onActionDropDownClicked = onFocusLine,
             onActionChanged = onActionChanged,
         )
 
         AdjustableOutlinedTextField(
             modifier = Modifier
+                .padding(start = 8.dp)
                 .weight(1f)
-                .heightIn(min = 40.dp),
-            enabled = rebaseLine.action == Action.REWORD,
+                .heightIn(min = 40.dp)
+                .focusRequester(focusRequester),
+            enabled = action == RebaseAction.REWORD,
             value = newMessage,
             onValueChange = {
                 newMessage = it
                 onMessageChanged(it)
             },
             textStyle = MaterialTheme.typography.body2,
-            backgroundColor = if(rebaseLine.action == Action.REWORD) {
+            backgroundColor = if (action == RebaseAction.REWORD) {
                 MaterialTheme.colors.background
             } else
                 MaterialTheme.colors.surface
@@ -160,30 +248,41 @@ fun RebaseCommit(
 
 @Composable
 fun ActionDropdown(
-    action: Action,
+    action: RebaseAction,
     isFirst: Boolean,
-    onActionChanged: (Action) -> Unit,
+    onActionDropDownClicked: () -> Unit,
+    onActionChanged: (RebaseAction) -> Unit,
 ) {
     var showDropDownMenu by remember { mutableStateOf(false) }
-    Box {
+    Box(
+        modifier = Modifier
+            .border(
+                width = 2.dp,
+                color = MaterialTheme.colors.onBackgroundSecondary.copy(alpha = 0.2f),
+                shape = RoundedCornerShape(4.dp),
+            )
+    ) {
         TextButton(
-            onClick = { showDropDownMenu = true },
+            onClick = {
+                showDropDownMenu = true
+                onActionDropDownClicked()
+            },
             modifier = Modifier
                 .width(120.dp)
-                .height(40.dp)
-                .padding(end = 8.dp),
+                .height(40.dp),
         ) {
             Text(
-                action.toToken().replaceFirstChar { it.uppercase() },
+                action.displayName,
                 color = MaterialTheme.colors.onBackground,
                 style = MaterialTheme.typography.body1,
                 modifier = Modifier.weight(1f)
             )
 
             Icon(
-                painterResource("expand_more.svg"),
+                painterResource(AppIcons.EXPAND_MORE),
                 contentDescription = null,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier
+                    .size(20.dp),
                 tint = MaterialTheme.colors.onBackground,
             )
         }
@@ -206,7 +305,7 @@ fun ActionDropdown(
                     }
                 ) {
                     Text(
-                        text = dropDownOption.toToken().replaceFirstChar { it.uppercase() },
+                        text = dropDownOption.displayName,
                         style = MaterialTheme.typography.body1,
                     )
                 }
@@ -216,15 +315,16 @@ fun ActionDropdown(
 }
 
 val firstItemActions = listOf(
-    Action.PICK,
-    Action.REWORD,
+    RebaseAction.PICK,
+    RebaseAction.REWORD,
+    RebaseAction.DROP,
 )
 
 val actions = listOf(
-    Action.PICK,
-    Action.REWORD,
-    Action.SQUASH,
-    Action.FIXUP,
+    RebaseAction.PICK,
+    RebaseAction.REWORD,
+    RebaseAction.SQUASH,
+    RebaseAction.FIXUP,
+    RebaseAction.EDIT,
+    RebaseAction.DROP,
 )
-
-

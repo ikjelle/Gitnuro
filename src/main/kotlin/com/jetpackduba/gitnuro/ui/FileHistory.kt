@@ -18,17 +18,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import com.jetpackduba.gitnuro.AppIcons
 import com.jetpackduba.gitnuro.extensions.handMouseClickable
 import com.jetpackduba.gitnuro.extensions.handOnHover
+import com.jetpackduba.gitnuro.extensions.shortName
 import com.jetpackduba.gitnuro.extensions.toSmartSystemString
 import com.jetpackduba.gitnuro.git.diff.DiffResult
 import com.jetpackduba.gitnuro.keybindings.KeybindingOption
 import com.jetpackduba.gitnuro.keybindings.matchesBinding
-import com.jetpackduba.gitnuro.theme.tertiarySurface
 import com.jetpackduba.gitnuro.theme.onBackgroundSecondary
+import com.jetpackduba.gitnuro.theme.tertiarySurface
 import com.jetpackduba.gitnuro.ui.components.AvatarImage
 import com.jetpackduba.gitnuro.ui.components.ScrollableLazyColumn
 import com.jetpackduba.gitnuro.ui.components.TooltipText
@@ -59,7 +63,7 @@ fun FileHistory(
             .focusRequester(focusRequester)
             .focusable()
             .onKeyEvent { keyEvent ->
-                if (keyEvent.matchesBinding(KeybindingOption.EXIT)) {
+                if (keyEvent.matchesBinding(KeybindingOption.EXIT) && keyEvent.type == KeyEventType.KeyDown) {
                     onClose()
                     true
                 } else
@@ -103,7 +107,7 @@ private fun Header(
                 .handOnHover()
         ) {
             Image(
-                painter = painterResource("close.svg"),
+                painter = painterResource(AppIcons.CLOSE),
                 contentDescription = "Close history",
                 colorFilter = ColorFilter.tint(MaterialTheme.colors.onBackground),
             )
@@ -172,7 +176,8 @@ fun HistoryContentLoaded(
                             onUnstageHunk = { _, _ -> },
                             onStageHunk = { _, _ -> },
                             onResetHunk = { _, _ -> },
-                            onActionTriggered = { _, _, _ -> }
+                            onUnStageLine = { _, _, _ -> },
+                            onDiscardLine = { _, _, _ -> },
                         )
                     }
 
@@ -184,7 +189,8 @@ fun HistoryContentLoaded(
                             onUnstageHunk = { _, _ -> },
                             onStageHunk = { _, _ -> },
                             onResetHunk = { _, _ -> },
-                            onActionTriggered = { _, _, _ -> },
+                            onUnStageLine = { _, _, _ -> },
+                            onDiscardLine = { _, _, _ -> },
                         )
                     }
 
@@ -232,7 +238,7 @@ fun HistoryCommit(commit: RevCommit, onCommitSelected: () -> Unit) {
 
             Row {
                 Text(
-                    text = commit.name.take(7),
+                    text = commit.shortName,
                     maxLines = 1,
                     style = MaterialTheme.typography.body2,
                     color = MaterialTheme.colors.onBackgroundSecondary,

@@ -3,7 +3,7 @@
 package com.jetpackduba.gitnuro.ui.components
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.Icon
 import androidx.compose.material.MaterialTheme
@@ -13,8 +13,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.jetpackduba.gitnuro.extensions.backgroundIf
+import com.jetpackduba.gitnuro.extensions.onDoubleClick
+import com.jetpackduba.gitnuro.theme.backgroundSelected
 
 
 const val ENTRY_HEIGHT = 36
@@ -23,9 +27,11 @@ const val ENTRY_HEIGHT = 36
 @Composable
 fun SideMenuSubentry(
     text: String,
+    fontWeight: FontWeight = FontWeight.Normal,
     iconResourcePath: String,
+    isSelected: Boolean,
     extraPadding: Dp = 0.dp,
-    onClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
     onDoubleClick: (() -> Unit)? = null,
     additionalInfo: @Composable () -> Unit = {}
 ) {
@@ -33,14 +39,15 @@ fun SideMenuSubentry(
         modifier = Modifier
             .height(ENTRY_HEIGHT.dp)
             .fillMaxWidth()
+            .clickable { onClick() }
             .run {
-                if (onClick != null)
-                    combinedClickable(onClick = onClick, onDoubleClick = onDoubleClick)
+                if (onDoubleClick != null)
+                    this.onDoubleClick(onDoubleClick)
                 else
                     this
             }
-            .padding(start = extraPadding),
-//            .background(background),
+            .padding(start = extraPadding)
+            .backgroundIf(isSelected, MaterialTheme.colors.backgroundSelected),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
@@ -54,6 +61,7 @@ fun SideMenuSubentry(
 
         Text(
             text = text,
+            fontWeight = fontWeight,
             modifier = Modifier.weight(1f, fill = true),
             maxLines = 1,
             style = MaterialTheme.typography.body2,

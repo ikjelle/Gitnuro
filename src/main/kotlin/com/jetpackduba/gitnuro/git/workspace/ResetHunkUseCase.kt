@@ -1,6 +1,5 @@
 package com.jetpackduba.gitnuro.git.workspace
 
-import com.jetpackduba.gitnuro.extensions.lineDelimiter
 import com.jetpackduba.gitnuro.git.diff.Hunk
 import com.jetpackduba.gitnuro.git.diff.LineType
 import kotlinx.coroutines.Dispatchers
@@ -18,10 +17,10 @@ class ResetHunkUseCase @Inject constructor(
         val repository = git.repository
 
         try {
-            val file = File(repository.directory.parent, diffEntry.oldPath)
+            val file = File(repository.workTree, diffEntry.oldPath)
 
             val content = file.readText()
-            val textLines = getLinesFromTextUseCase(content, content.lineDelimiter).toMutableList()
+            val textLines = getLinesFromTextUseCase(content).toMutableList() // TODO Test this
             val hunkLines = hunk.lines.filter { it.lineType != LineType.CONTEXT }
 
             val addedLines = hunkLines

@@ -1,6 +1,7 @@
 package com.jetpackduba.gitnuro.viewmodels
 
 import androidx.compose.foundation.lazy.LazyListState
+import com.jetpackduba.gitnuro.TaskType
 import com.jetpackduba.gitnuro.exceptions.MissingDiffEntryException
 import com.jetpackduba.gitnuro.extensions.filePath
 import com.jetpackduba.gitnuro.git.DiffEntryType
@@ -76,8 +77,11 @@ class HistoryViewModel @Inject constructor(
 
     fun fileHistory(filePath: String) = tabState.safeProcessing(
         refreshType = RefreshType.NONE,
+        title = "History",
+        subtitle = "Loading file history",
+        taskType = TaskType.HISTORY_FILE,
     ) { git ->
-        this.filePath = filePath
+        this@HistoryViewModel.filePath = filePath
         _historyState.value = HistoryState.Loading(filePath)
 
         val log = git.log()
@@ -106,7 +110,11 @@ class HistoryViewModel @Inject constructor(
 
             val diffEntryType = DiffEntryType.CommitDiff(diffEntry)
 
-            val diffResult = formatDiffUseCase(git, diffEntryType)
+            val diffResult = formatDiffUseCase(
+                git,
+                diffEntryType,
+                false
+            ) // TODO This hardcoded false should be changed when the UI is implemented
             val textDiffType = settings.textDiffType
 
             val formattedDiffResult = if (textDiffType == TextDiffType.SPLIT && diffResult is DiffResult.Text) {
@@ -117,7 +125,7 @@ class HistoryViewModel @Inject constructor(
             _viewDiffResult.value = ViewDiffResult.Loaded(diffEntryType, formattedDiffResult)
         } catch (ex: Exception) {
             if (ex is MissingDiffEntryException) {
-                tabState.refreshData(refreshType = RefreshType.UNCOMMITED_CHANGES)
+                tabState.refreshData(refreshType = RefreshType.UNCOMMITTED_CHANGES)
                 _viewDiffResult.value = ViewDiffResult.DiffNotFound
             } else
                 ex.printStackTrace()

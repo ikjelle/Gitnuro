@@ -2,6 +2,9 @@ package com.jetpackduba.gitnuro.ui.context_menu
 
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.TextContextMenu
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material.Icon
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
@@ -10,24 +13,42 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.awtEventOrNull
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.painter.Painter
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.pointer.*
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
+import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.pointer.isSecondary
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalLocalization
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.*
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.window.rememberPopupPositionProviderAtPosition
+import com.jetpackduba.gitnuro.AppIcons
 import com.jetpackduba.gitnuro.extensions.awaitFirstDownEvent
+import com.jetpackduba.gitnuro.extensions.handMouseClickable
 import com.jetpackduba.gitnuro.keybindings.KeybindingOption
 import com.jetpackduba.gitnuro.keybindings.matchesBinding
+import com.jetpackduba.gitnuro.theme.isDark
 import com.jetpackduba.gitnuro.theme.onBackgroundSecondary
+import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import kotlin.math.abs
 
 private var lastCheck: Long = 0
-private const val MIN_TIME_BETWEEN_POPUPS = 20
+private const val MIN_TIME_BETWEEN_POPUPS_IN_MS = 20
 
 @Composable
 fun ContextMenu(items: () -> List<ContextMenuElement>, function: @Composable () -> Unit) {
@@ -36,25 +57,37 @@ fun ContextMenu(items: () -> List<ContextMenuElement>, function: @Composable () 
     }
 }
 
+@Composable
+fun DropdownMenu(items: () -> List<ContextMenuElement>, function: @Composable () -> Unit) {
+    Box(modifier = Modifier.dropdownMenu(items), propagateMinConstraints = true) {
+        function()
+    }
+}
+
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun Modifier.contextMenu(items: () -> List<ContextMenuElement>): Modifier {
     val (lastMouseEventState, setLastMouseEventState) = remember { mutableStateOf<MouseEvent?>(null) }
-    val mod = this.pointerInput(Unit) {
 
-        while (true) {
-            val lastMouseEvent = awaitPointerEventScope { awaitFirstDownEvent() }
-            val mouseEvent = lastMouseEvent.awtEventOrNull
+    val modifier = this.pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                val lastMouseEvent = awaitFirstDownEvent()
+                val mouseEvent = lastMouseEvent.awtEventOrNull
 
-            if (mouseEvent != null) {
-                if (lastMouseEvent.button.isSecondary) {
-                    val currentCheck = System.currentTimeMillis()
-                    if (lastCheck != 0L && currentCheck - lastCheck < MIN_TIME_BETWEEN_POPUPS) {
-                        println("IGNORE POPUP TRIGGERED!")
-                    } else {
-                        lastCheck = currentCheck
+                if (mouseEvent != null) {
 
-                        setLastMouseEventState(mouseEvent)
+                    if (lastMouseEvent.button.isSecondary) {
+                        lastMouseEvent.changes.forEach { it.consume() }
+
+                        val currentCheck = System.currentTimeMillis()
+                        if (lastCheck != 0L && currentCheck - lastCheck < MIN_TIME_BETWEEN_POPUPS_IN_MS) {
+                            println("Popup ignored!")
+                        } else {
+                            lastCheck = currentCheck
+
+                            setLastMouseEventState(mouseEvent)
+                        }
                     }
                 }
             }
@@ -62,11 +95,39 @@ private fun Modifier.contextMenu(items: () -> List<ContextMenuElement>): Modifie
     }
 
     if (lastMouseEventState != null) {
+        DisableSelection {
+            showPopup(
+                lastMouseEventState.x,
+                lastMouseEventState.y,
+                items(),
+                onDismissRequest = { setLastMouseEventState(null) }
+            )
+        }
+    }
+
+    return modifier
+}
+
+@Composable
+private fun Modifier.dropdownMenu(items: () -> List<ContextMenuElement>): Modifier {
+    val (isClicked, setIsClicked) = remember { mutableStateOf(false) }
+    val (offset, setOffset) = remember { mutableStateOf<Offset?>(null) }
+    val mod = this
+        .onGloballyPositioned { layoutCoordinates ->
+            val offsetToRoot = layoutCoordinates.localToRoot(Offset.Zero)
+            val offsetToBottomOfComponent = offsetToRoot.copy(y = offsetToRoot.y + layoutCoordinates.size.height)
+            setOffset(offsetToBottomOfComponent)
+        }
+        .handMouseClickable {
+            setIsClicked(true)
+        }
+
+    if (offset != null && isClicked) {
         showPopup(
-            lastMouseEventState.x,
-            lastMouseEventState.y,
+            offset.x.toInt(),
+            offset.y.toInt(),
             items(),
-            onDismissRequest = { setLastMouseEventState(null) })
+            onDismissRequest = { setIsClicked(false) })
     }
 
     return mod
@@ -74,11 +135,10 @@ private fun Modifier.contextMenu(items: () -> List<ContextMenuElement>): Modifie
 
 @Composable
 fun showPopup(x: Int, y: Int, contextMenuElements: List<ContextMenuElement>, onDismissRequest: () -> Unit) {
-    LaunchedEffect(contextMenuElements) {
-        println("Items count ${contextMenuElements.count()}")
-    }
     Popup(
-        focusable = true,
+        properties = PopupProperties(
+            focusable = true,
+        ),
         popupPositionProvider = object : PopupPositionProvider {
             override fun calculatePosition(
                 anchorBounds: IntRect,
@@ -118,12 +178,18 @@ fun showPopup(x: Int, y: Int, contextMenuElements: List<ContextMenuElement>, onD
 
         Box(
             modifier = Modifier
-                .shadow(4.dp)
-                .width(300.dp)
+                .shadow(8.dp)
+                .clip(MaterialTheme.shapes.small)
                 .background(MaterialTheme.colors.background)
+                .width(IntrinsicSize.Max)
+                .widthIn(min = 180.dp)
                 .run {
-                    return@run if (!MaterialTheme.colors.isLight) {
-                        this.border(1.dp, MaterialTheme.colors.onBackground.copy(alpha = 0.2f))
+                    if (MaterialTheme.colors.isDark) {
+                        this.border(
+                            2.dp,
+                            MaterialTheme.colors.onBackground.copy(alpha = 0.2f),
+                            shape = MaterialTheme.shapes.small
+                        )
                     } else
                         this
                 }
@@ -154,17 +220,11 @@ fun showPopup(x: Int, y: Int, contextMenuElements: List<ContextMenuElement>, onD
 fun Separator() {
     Box(
         modifier = Modifier
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
             .fillMaxWidth()
             .height(1.dp)
             .background(MaterialTheme.colors.onBackground.copy(alpha = 0.4f))
     )
-}
-
-@Composable
-internal fun focusRequesterAndModifier(): Pair<FocusRequester, Modifier> {
-    val focusRequester = remember { FocusRequester() }
-    return focusRequester to Modifier.focusRequester(focusRequester)
 }
 
 @Composable
@@ -199,12 +259,151 @@ fun TextEntry(contextTextEntry: ContextMenuElement.ContextTextEntry, onDismissRe
     }
 }
 
-sealed interface ContextMenuElement {
-    data class ContextTextEntry(
-        val label: String,
+sealed class ContextMenuElement(
+    label: String,
+    onClick: () -> Unit = {}
+) : ContextMenuItem(label, onClick) {
+    class ContextTextEntry(
+        label: String,
         val icon: @Composable (() -> Painter)? = null,
-        val onClick: () -> Unit = {}
-    ) : ContextMenuElement
+        onClick: () -> Unit = {}
+    ) : ContextMenuElement(label, onClick)
 
-    object ContextSeparator : ContextMenuElement
+    object ContextSeparator : ContextMenuElement("", {})
+}
+
+
+@ExperimentalFoundationApi
+class AppPopupMenu : TextContextMenu {
+    @Composable
+    override fun Area(
+        textManager: TextContextMenu.TextManager,
+        state: ContextMenuState,
+        content: @Composable () -> Unit
+    ) {
+        val localization = LocalLocalization.current
+        val items = {
+            listOfNotNull(
+                textManager.copy?.let {
+                    ContextMenuElement.ContextTextEntry(
+                        label = localization.copy,
+                        icon = { painterResource(AppIcons.COPY) },
+                        onClick = it
+                    )
+                },
+                textManager.cut?.let {
+                    ContextMenuElement.ContextTextEntry(
+                        label = localization.cut,
+                        icon = { painterResource(AppIcons.CUT) },
+                        onClick = it
+                    )
+                },
+                textManager.paste?.let {
+                    ContextMenuElement.ContextTextEntry(
+                        label = localization.paste,
+                        icon = { painterResource(AppIcons.PASTE) },
+                        onClick = it
+                    )
+                },
+                textManager.selectAll?.let {
+                    ContextMenuElement.ContextTextEntry(
+                        label = localization.selectAll,
+                        icon = null,
+                        onClick = it
+                    )
+                },
+            )
+        }
+        CompositionLocalProvider(
+            LocalContextMenuRepresentation provides AppContextMenuRepresentation()
+        ) {
+            ContextMenuArea(items, state, content = content)
+        }
+
+    }
+}
+
+class AppContextMenuRepresentation : ContextMenuRepresentation {
+    @OptIn(ExperimentalComposeUiApi::class)
+    @Composable
+    override fun Representation(state: ContextMenuState, items: () -> List<ContextMenuItem>) {
+        LightDefaultContextMenuRepresentation
+        val status = state.status
+        if (status is ContextMenuState.Status.Open) {
+            var focusManager: FocusManager? by mutableStateOf(null)
+            var inputModeManager: InputModeManager? by mutableStateOf(null)
+
+            Popup(
+                properties = PopupProperties(
+                    focusable = true,
+                ),
+                onDismissRequest = { state.status = ContextMenuState.Status.Closed },
+                popupPositionProvider = rememberPopupPositionProviderAtPosition(
+                    positionPx = status.rect.center
+                ),
+                onKeyEvent = {
+                    if (it.type == KeyEventType.KeyDown) {
+                        when (it.key.nativeKeyCode) {
+                            KeyEvent.VK_ESCAPE -> {
+                                state.status = ContextMenuState.Status.Closed
+                                true
+                            }
+
+                            KeyEvent.VK_DOWN -> {
+                                inputModeManager?.requestInputMode(InputMode.Keyboard)
+                                focusManager?.moveFocus(FocusDirection.Next)
+                                true
+                            }
+
+                            KeyEvent.VK_UP -> {
+                                inputModeManager?.requestInputMode(InputMode.Keyboard)
+                                focusManager?.moveFocus(FocusDirection.Previous)
+                                true
+                            }
+
+                            else -> false
+                        }
+                    } else {
+                        false
+                    }
+                },
+            ) {
+                focusManager = LocalFocusManager.current
+                inputModeManager = LocalInputModeManager.current
+
+                val border = if (MaterialTheme.colors.isDark) {
+                    BorderStroke(2.dp, MaterialTheme.colors.onBackgroundSecondary.copy(alpha = 0.2f))
+                } else
+                    null
+
+                Column(
+                    modifier = Modifier
+                        .shadow(8.dp)
+                        .clip(MaterialTheme.shapes.small)
+                        .background(MaterialTheme.colors.background)
+                        .width(IntrinsicSize.Max)
+                        .widthIn(min = 180.dp)
+                        .verticalScroll(rememberScrollState())
+                        .run {
+                            if (border != null)
+                                border(border, MaterialTheme.shapes.small)
+                            else
+                                this
+                        }
+
+                ) {
+                    items().forEach { item ->
+                        when (item) {
+                            is ContextMenuElement.ContextTextEntry -> TextEntry(
+                                contextTextEntry = item,
+                                onDismissRequest = { state.status = ContextMenuState.Status.Closed }
+                            )
+
+                            is ContextMenuElement.ContextSeparator -> Separator()
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

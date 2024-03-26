@@ -1,6 +1,10 @@
 package com.jetpackduba.gitnuro.extensions
 
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -10,6 +14,7 @@ import androidx.compose.ui.awt.awtEventOrNull
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.*
+import kotlinx.coroutines.coroutineScope
 
 fun Modifier.backgroundIf(condition: Boolean, color: Color, elseColor: Color? = null): Modifier {
     return if (condition) {
@@ -49,27 +54,61 @@ fun Modifier.ignoreKeyEvents(): Modifier {
 
 @OptIn(ExperimentalComposeUiApi::class)
 fun Modifier.handOnHover(): Modifier {
-    return this.pointerHoverIcon(PointerIconDefaults.Hand)
+    return this.pointerHoverIcon(PointerIcon.Hand)
 }
 
-// TODO Try to restore hover that was shown with clickable modifier
+/**
+ * Detects double clicks without messing with other [clickable] features (like hover effect, single-click duration and
+ * accessibility features). Doesn't work when combined with long press though. This is a simplified version of
+ * [PointerInputScope.detectTapGestures] for double clicks only, and without consuming the first click.
+ */
+@Composable
+fun Modifier.onDoubleClick(
+    onDoubleClick: () -> Unit,
+): Modifier {
+    return this.pointerInput(Unit) {
+        coroutineScope {
+            awaitEachGesture {
+                // Detect first click without consuming it (other, independent handlers want it).
+                awaitFirstDown()
+                val firstUp = waitForUpOrCancellation() ?: return@awaitEachGesture
+
+                // Detect and consume the second click if it's received within the timeout.
+                val secondDown = withTimeoutOrNull(viewConfiguration.doubleTapTimeoutMillis) {
+                    val minUptime = firstUp.uptimeMillis + viewConfiguration.doubleTapMinTimeMillis
+                    var change: PointerInputChange
+                    // The second tap doesn't count if it happens before DoubleTapMinTime of the first tap
+                    do {
+                        change = awaitFirstDown()
+                    } while (change.uptimeMillis < minUptime)
+                    change
+                } ?: return@awaitEachGesture
+                secondDown.consume()
+                val secondUp = waitForUpOrCancellation() ?: return@awaitEachGesture
+                secondUp.consume()
+
+                // Both clicks happened in time, fire the event.
+                onDoubleClick()
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-fun Modifier.fastClickable(key: Any = Unit, key2: Any = Unit, onClick: () -> Unit) =
-    this.handOnHover()
-        .hoverBackground()
-        .pointerInput(key, key2) {
-            while (true) {
-                val lastMouseEvent = awaitPointerEventScope { awaitFirstDownEvent() }
-                val mouseEvent = lastMouseEvent.awtEventOrNull
+fun Modifier.onMiddleMouseButtonClick(key: Any = Unit, key2: Any = Unit, onClick: () -> Unit) =
+    this.pointerInput(key, key2) {
+        while (true) {
+            val lastMouseEvent = awaitPointerEventScope { awaitFirstDownEvent() }
+            val mouseEvent = lastMouseEvent.awtEventOrNull
 
-                if (mouseEvent != null) {
-                    if (lastMouseEvent.button.isPrimary) {
-                        onClick()
-                    }
+            if (mouseEvent != null) {
+                if (lastMouseEvent.button.isTertiary) {
+                    onClick()
                 }
             }
         }
+    }
 
 @Composable
 private fun Modifier.hoverBackground(): Modifier {

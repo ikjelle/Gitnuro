@@ -1,4 +1,3 @@
-//asdasd
 package com.jetpackduba.gitnuro.viewmodels
 
 import androidx.compose.foundation.lazy.LazyListState
@@ -10,10 +9,13 @@ import com.jetpackduba.gitnuro.git.TabState
 import com.jetpackduba.gitnuro.git.diff.*
 import com.jetpackduba.gitnuro.git.workspace.*
 import com.jetpackduba.gitnuro.preferences.AppSettings
+import com.jetpackduba.gitnuro.system.OpenFileInExternalAppUseCase
+import com.jetpackduba.gitnuro.ui.TabsManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import org.eclipse.jgit.diff.DiffEntry
 import javax.inject.Inject
@@ -30,35 +32,49 @@ class DiffViewModel @Inject constructor(
     private val resetHunkUseCase: ResetHunkUseCase,
     private val stageEntryUseCase: StageEntryUseCase,
     private val unstageEntryUseCase: UnstageEntryUseCase,
+    private val openFileInExternalAppUseCase: OpenFileInExternalAppUseCase,
     private val settings: AppSettings,
     private val generateSplitHunkFromDiffResultUseCase: GenerateSplitHunkFromDiffResultUseCase,
+    private val discardUnstagedHunkLineUseCase: DiscardUnstagedHunkLineUseCase,
+    private val tabsManager: TabsManager,
     tabScope: CoroutineScope,
 ) {
     private val _diffResult = MutableStateFlow<ViewDiffResult>(ViewDiffResult.Loading(""))
     val diffResult: StateFlow<ViewDiffResult?> = _diffResult
 
     val diffTypeFlow = settings.textDiffTypeFlow
-    private var diffEntryType: DiffEntryType? = null
-    private var diffTypeFlowChangesCount = 0
+    val isDisplayFullFile = settings.diffDisplayFullFileFlow
 
+    private var diffEntryType: DiffEntryType? = null
     private var diffJob: Job? = null
 
     init {
         tabScope.launch {
-            diffTypeFlow.collect {
-                val diffEntryType = this@DiffViewModel.diffEntryType
-                if (diffTypeFlowChangesCount > 0 && diffEntryType != null) { // Ignore the first time the flow triggers, we only care about updates
-                    updateDiff(diffEntryType)
+            diffTypeFlow
+                .drop(1) // Ignore the first time the flow triggers, we only care about updates
+                .collect {
+                    val diffEntryType = this@DiffViewModel.diffEntryType
+                    if (diffEntryType != null) {
+                        updateDiff(diffEntryType)
+                    }
                 }
+        }
 
-                diffTypeFlowChangesCount++
-            }
+        tabScope.launch {
+            isDisplayFullFile
+                .drop(1) // Ignore the first time the flow triggers, we only care about updates
+                .collect {
+                    val diffEntryType = this@DiffViewModel.diffEntryType
+                    if (diffEntryType != null) {
+                        updateDiff(diffEntryType)
+                    }
+                }
         }
 
         tabScope.launch {
             tabState.refreshFlowFiltered(
-                RefreshType.UNCOMMITED_CHANGES,
-                RefreshType.UNCOMMITED_CHANGES_AND_LOG,
+                RefreshType.UNCOMMITTED_CHANGES,
+                RefreshType.UNCOMMITTED_CHANGES_AND_LOG,
             ) {
                 val diffResultValue = diffResult.value
                 if (diffResultValue is ViewDiffResult.Loaded) {
@@ -87,10 +103,12 @@ class DiffViewModel @Inject constructor(
             }
 
             // If it's a different file or different state (index or workdir), reset the scroll state
-            if (oldDiffEntryType != null &&
-                oldDiffEntryType is DiffEntryType.UncommitedDiff &&
-                diffEntryType is DiffEntryType.UncommitedDiff &&
-                oldDiffEntryType.statusEntry.filePath != diffEntryType.statusEntry.filePath
+            if (
+                oldDiffEntryType?.filePath != diffEntryType.filePath ||
+                oldDiffEntryType is DiffEntryType.UncommittedDiff &&
+                diffEntryType is DiffEntryType.UncommittedDiff &&
+                oldDiffEntryType.statusEntry.filePath == diffEntryType.statusEntry.filePath &&
+                oldDiffEntryType::class != diffEntryType::class
             ) {
                 lazyListState.value = LazyListState(
                     0,
@@ -105,7 +123,7 @@ class DiffViewModel @Inject constructor(
                     delayMs = if (isFirstLoad) 0 else DIFF_MIN_TIME_IN_MS_TO_SHOW_LOAD,
                     onDelayTriggered = { _diffResult.value = ViewDiffResult.Loading(diffEntryType.filePath) }
                 ) {
-                    val diffFormat = formatDiffUseCase(git, diffEntryType)
+                    val diffFormat = formatDiffUseCase(git, diffEntryType, isDisplayFullFile.value)
                     val diffEntry = diffFormat.diffEntry
                     if (
                         diffTypeFlow.value == TextDiffType.SPLIT &&
@@ -124,7 +142,7 @@ class DiffViewModel @Inject constructor(
                 }
             } catch (ex: Exception) {
                 if (ex is MissingDiffEntryException) {
-                    tabState.refreshData(refreshType = RefreshType.UNCOMMITED_CHANGES)
+                    tabState.refreshData(refreshType = RefreshType.UNCOMMITTED_CHANGES)
                     _diffResult.value = ViewDiffResult.DiffNotFound
                 } else
                     ex.printStackTrace()
@@ -133,33 +151,33 @@ class DiffViewModel @Inject constructor(
     }
 
     fun stageHunk(diffEntry: DiffEntry, hunk: Hunk) = tabState.runOperation(
-        refreshType = RefreshType.UNCOMMITED_CHANGES,
+        refreshType = RefreshType.UNCOMMITTED_CHANGES,
     ) { git ->
         stageHunkUseCase(git, diffEntry, hunk)
     }
 
     fun resetHunk(diffEntry: DiffEntry, hunk: Hunk) = tabState.runOperation(
-        refreshType = RefreshType.UNCOMMITED_CHANGES,
+        refreshType = RefreshType.UNCOMMITTED_CHANGES,
         showError = true,
     ) { git ->
         resetHunkUseCase(git, diffEntry, hunk)
     }
 
     fun unstageHunk(diffEntry: DiffEntry, hunk: Hunk) = tabState.runOperation(
-        refreshType = RefreshType.UNCOMMITED_CHANGES,
+        refreshType = RefreshType.UNCOMMITTED_CHANGES,
     ) { git ->
         unstageHunkUseCase(git, diffEntry, hunk)
     }
 
     fun stageFile(statusEntry: StatusEntry) = tabState.runOperation(
-        refreshType = RefreshType.UNCOMMITED_CHANGES,
+        refreshType = RefreshType.UNCOMMITTED_CHANGES,
         showError = true,
     ) { git ->
         stageEntryUseCase(git, statusEntry)
     }
 
     fun unstageFile(statusEntry: StatusEntry) = tabState.runOperation(
-        refreshType = RefreshType.UNCOMMITED_CHANGES,
+        refreshType = RefreshType.UNCOMMITTED_CHANGES,
         showError = true,
     ) { git ->
         unstageEntryUseCase(git, statusEntry)
@@ -173,18 +191,37 @@ class DiffViewModel @Inject constructor(
         settings.textDiffType = newDiffType
     }
 
+    fun changeDisplayFullFile(isDisplayFullFile: Boolean) {
+        settings.diffDisplayFullFile = isDisplayFullFile
+    }
+
     fun stageHunkLine(entry: DiffEntry, hunk: Hunk, line: Line) = tabState.runOperation(
-        refreshType = RefreshType.UNCOMMITED_CHANGES,
+        refreshType = RefreshType.UNCOMMITTED_CHANGES,
         showError = true,
     ) { git ->
         stageHunkLineUseCase(git, entry, hunk, line)
     }
 
     fun unstageHunkLine(entry: DiffEntry, hunk: Hunk, line: Line) = tabState.runOperation(
-        refreshType = RefreshType.UNCOMMITED_CHANGES,
+        refreshType = RefreshType.UNCOMMITTED_CHANGES,
         showError = true,
     ) { git ->
         unstageHunkLineUseCase(git, entry, hunk, line)
+    }
+
+    fun openFileWithExternalApp(path: String) {
+        openFileInExternalAppUseCase(path)
+    }
+
+    fun discardHunkLine(entry: DiffEntry, hunk: Hunk, line: Line) = tabState.runOperation(
+        refreshType = RefreshType.UNCOMMITTED_CHANGES,
+        showError = true,
+    ) { git ->
+        discardUnstagedHunkLineUseCase(git, entry, hunk, line)
+    }
+
+    fun openSubmodule(path: String) = tabState.runOperation(refreshType = RefreshType.NONE) { git ->
+        tabsManager.addNewTabFromPath("${git.repository.workTree}/$path", true)
     }
 }
 

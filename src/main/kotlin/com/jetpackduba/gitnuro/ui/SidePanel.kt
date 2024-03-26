@@ -10,17 +10,24 @@ import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.jetpackduba.gitnuro.AppIcons
 import com.jetpackduba.gitnuro.extensions.handOnHover
 import com.jetpackduba.gitnuro.extensions.isLocal
+import com.jetpackduba.gitnuro.extensions.isValid
 import com.jetpackduba.gitnuro.extensions.simpleName
 import com.jetpackduba.gitnuro.theme.onBackgroundSecondary
 import com.jetpackduba.gitnuro.ui.components.*
+import com.jetpackduba.gitnuro.ui.components.tooltip.DelayedTooltip
 import com.jetpackduba.gitnuro.ui.context_menu.*
+import com.jetpackduba.gitnuro.ui.dialogs.AddSubmodulesDialog
 import com.jetpackduba.gitnuro.ui.dialogs.EditRemotesDialog
+import com.jetpackduba.gitnuro.ui.dialogs.SetDefaultUpstreamBranchDialog
 import com.jetpackduba.gitnuro.viewmodels.sidepanel.*
 import org.eclipse.jgit.lib.Ref
 import org.eclipse.jgit.revwalk.RevCommit
+import org.eclipse.jgit.submodule.SubmoduleStatus
 
 @Composable
 fun SidePanel(
@@ -29,15 +36,20 @@ fun SidePanel(
     remotesViewModel: RemotesViewModel = sidePanelViewModel.remotesViewModel,
     tagsViewModel: TagsViewModel = sidePanelViewModel.tagsViewModel,
     stashesViewModel: StashesViewModel = sidePanelViewModel.stashesViewModel,
+    submodulesViewModel: SubmodulesViewModel = sidePanelViewModel.submodulesViewModel,
 ) {
     var filter by remember(sidePanelViewModel) { mutableStateOf(sidePanelViewModel.filter.value) }
+    val selectedItem by sidePanelViewModel.selectedItem.collectAsState()
 
     val branchesState by branchesViewModel.branchesState.collectAsState()
     val remotesState by remotesViewModel.remoteState.collectAsState()
     val tagsState by tagsViewModel.tagsState.collectAsState()
     val stashesState by stashesViewModel.stashesState.collectAsState()
+    val submodulesState by submodulesViewModel.submodules.collectAsState()
 
     var showEditRemotesDialog by remember { mutableStateOf(false) }
+    val (branchToChangeUpstream, setBranchToChangeUpstream) = remember { mutableStateOf<Ref?>(null) }
+    var showEditSubmodulesDialog by remember { mutableStateOf(false) }
 
     Column {
         FilterTextField(
@@ -50,13 +62,16 @@ fun SidePanel(
                 .padding(start = 8.dp)
         )
 
-        ScrollableLazyColumn(modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 4.dp)
+        ScrollableLazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 4.dp)
         ) {
             localBranches(
                 branchesState = branchesState,
+                selectedItem = selectedItem,
                 branchesViewModel = branchesViewModel,
+                onChangeDefaultUpstreamBranch = { setBranchToChangeUpstream(it) }
             )
 
             remotes(
@@ -67,12 +82,20 @@ fun SidePanel(
 
             tags(
                 tagsState = tagsState,
+                selectedItem = selectedItem,
                 tagsViewModel = tagsViewModel,
             )
 
             stashes(
                 stashesState = stashesState,
+                selectedItem = selectedItem,
                 stashesViewModel = stashesViewModel,
+            )
+
+            submodules(
+                submodulesState = submodulesState,
+                submodulesViewModel = submodulesViewModel,
+                onShowEditSubmodulesDialog = { showEditSubmodulesDialog = true },
             )
         }
     }
@@ -83,6 +106,26 @@ fun SidePanel(
             onDismiss = {
                 showEditRemotesDialog = false
             },
+        )
+    }
+
+    if (branchToChangeUpstream != null) {
+        SetDefaultUpstreamBranchDialog(
+            viewModel = gitnuroDynamicViewModel(),
+            branch = branchToChangeUpstream,
+            onClose = { setBranchToChangeUpstream(null) }
+        )
+    }
+
+    if (showEditSubmodulesDialog) {
+        AddSubmodulesDialog(
+            onCancel = {
+                showEditSubmodulesDialog = false
+            },
+            onAccept = { repository, directory ->
+                submodulesViewModel.onCreateSubmodule(repository, directory)
+                showEditSubmodulesDialog = false
+            }
         )
     }
 }
@@ -98,21 +141,39 @@ fun FilterTextField(value: String, onValueChange: (String) -> Unit, modifier: Mo
             fontSize = MaterialTheme.typography.body2.fontSize,
             color = MaterialTheme.colors.onBackground,
         ),
-        maxLines = 1,
+        singleLine = true,
         leadingIcon = {
             Icon(
-                painterResource("search.svg"),
+                painterResource(AppIcons.SEARCH),
                 contentDescription = null,
                 modifier = Modifier.size(16.dp),
                 tint = if (value.isEmpty()) MaterialTheme.colors.onBackgroundSecondary else MaterialTheme.colors.onBackground
             )
+        },
+        trailingIcon = {
+            if (value.isNotEmpty()) {
+                IconButton(
+                    onClick = { onValueChange("") },
+                    modifier = Modifier
+                        .size(16.dp)
+                        .handOnHover(),
+                ) {
+                    Icon(
+                        painterResource(AppIcons.CLOSE),
+                        contentDescription = null,
+                        tint = if (value.isEmpty()) MaterialTheme.colors.onBackgroundSecondary else MaterialTheme.colors.onBackground
+                    )
+                }
+            }
         }
     )
 }
 
 fun LazyListScope.localBranches(
     branchesState: BranchesState,
+    selectedItem: SelectedItem,
     branchesViewModel: BranchesViewModel,
+    onChangeDefaultUpstreamBranch: (Ref) -> Unit,
 ) {
     val isExpanded = branchesState.isExpanded
     val branches = branchesState.branches
@@ -124,7 +185,7 @@ fun LazyListScope.localBranches(
         ) {
             SideMenuHeader(
                 text = "Local branches",
-                icon = painterResource("branch.svg"),
+                icon = painterResource(AppIcons.BRANCH),
                 itemsCount = branches.count(),
                 hoverIcon = null,
                 isExpanded = isExpanded,
@@ -137,17 +198,15 @@ fun LazyListScope.localBranches(
         items(branches, key = { it.name }) { branch ->
             Branch(
                 branch = branch,
+                isSelectedItem = selectedItem is SelectedItem.Ref && selectedItem.ref == branch,
                 currentBranch = currentBranch,
-                isCurrentBranch = currentBranch?.name == branch.name,
                 onBranchClicked = { branchesViewModel.selectBranch(branch) },
                 onBranchDoubleClicked = { branchesViewModel.checkoutRef(branch) },
                 onCheckoutBranch = { branchesViewModel.checkoutRef(branch) },
                 onMergeBranch = { branchesViewModel.mergeBranch(branch) },
-                onDeleteBranch = { branchesViewModel.deleteBranch(branch) },
                 onRebaseBranch = { branchesViewModel.rebaseBranch(branch) },
-                onPushToRemoteBranch = { branchesViewModel.pushToRemoteBranch(branch) },
-                onPullFromRemoteBranch = { branchesViewModel.pullFromRemoteBranch(branch) },
-            )
+                onDeleteBranch = { branchesViewModel.deleteBranch(branch) },
+            ) { onChangeDefaultUpstreamBranch(branch) }
         }
     }
 }
@@ -161,34 +220,30 @@ fun LazyListScope.remotes(
     val remotes = remotesState.remotes
 
     item {
-        ContextMenu(
-            items = { remoteBranchesContextMenu(onShowEditRemotesDialog) }
-        ) {
-            SideMenuHeader(
-                text = "Remotes",
-                icon = painterResource("cloud.svg"),
-                itemsCount = remotes.count(),
-                hoverIcon = {
-                    IconButton(
-                        onClick = onShowEditRemotesDialog,
+        SideMenuHeader(
+            text = "Remotes",
+            icon = painterResource(AppIcons.CLOUD),
+            itemsCount = remotes.count(),
+            hoverIcon = {
+                IconButton(
+                    onClick = onShowEditRemotesDialog,
+                    modifier = Modifier
+                        .padding(end = 16.dp)
+                        .size(16.dp)
+                        .handOnHover(),
+                ) {
+                    Icon(
+                        painter = painterResource(AppIcons.SETTINGS),
+                        contentDescription = null,
                         modifier = Modifier
-                            .padding(end = 16.dp)
-                            .size(16.dp)
-                            .handOnHover(),
-                    ) {
-                        Icon(
-                            painter = painterResource("settings.svg"),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .fillMaxSize(),
-                            tint = MaterialTheme.colors.onBackground,
-                        )
-                    }
-                },
-                isExpanded = isExpanded,
-                onExpand = { remotesViewModel.onExpand() }
-            )
-        }
+                            .fillMaxSize(),
+                        tint = MaterialTheme.colors.onBackground,
+                    )
+                }
+            },
+            isExpanded = isExpanded,
+            onExpand = { remotesViewModel.onExpand() }
+        )
     }
 
     if (isExpanded) {
@@ -204,8 +259,12 @@ fun LazyListScope.remotes(
                 items(remote.remoteInfo.branchesList) { remoteBranch ->
                     RemoteBranches(
                         remoteBranch = remoteBranch,
+                        currentBranch = remotesState.currentBranch,
                         onBranchClicked = { remotesViewModel.selectBranch(remoteBranch) },
+                        onCheckoutBranch = { remotesViewModel.checkoutRemoteBranch(remoteBranch) },
                         onDeleteBranch = { remotesViewModel.deleteRemoteBranch(remoteBranch) },
+                        onPushRemoteBranch = { remotesViewModel.pushToRemoteBranch(remoteBranch) },
+                        onPullRemoteBranch = { remotesViewModel.pullFromRemoteBranch(remoteBranch) },
                     )
                 }
             }
@@ -217,6 +276,7 @@ fun LazyListScope.remotes(
 fun LazyListScope.tags(
     tagsState: TagsState,
     tagsViewModel: TagsViewModel,
+    selectedItem: SelectedItem,
 ) {
     val isExpanded = tagsState.isExpanded
     val tags = tagsState.tags
@@ -227,7 +287,7 @@ fun LazyListScope.tags(
         ) {
             SideMenuHeader(
                 text = "Tags",
-                icon = painterResource("tag.svg"),
+                icon = painterResource(AppIcons.TAG),
                 itemsCount = tags.count(),
                 hoverIcon = null,
                 isExpanded = isExpanded,
@@ -238,14 +298,13 @@ fun LazyListScope.tags(
 
     if (isExpanded) {
         items(tags, key = { it.name }) { tag ->
-//            if () {
             Tag(
                 tag,
+                isSelected = selectedItem is SelectedItem.Ref && selectedItem.ref == tag,
                 onTagClicked = { tagsViewModel.selectTag(tag) },
-                onCheckoutTag = { tagsViewModel.checkoutRef(tag) },
+                onCheckoutTag = { tagsViewModel.checkoutTagCommit(tag) },
                 onDeleteTag = { tagsViewModel.deleteTag(tag) }
             )
-//            }
         }
     }
 }
@@ -253,6 +312,7 @@ fun LazyListScope.tags(
 fun LazyListScope.stashes(
     stashesState: StashesState,
     stashesViewModel: StashesViewModel,
+    selectedItem: SelectedItem,
 ) {
     val isExpanded = stashesState.isExpanded
     val stashes = stashesState.stashes
@@ -263,7 +323,7 @@ fun LazyListScope.stashes(
         ) {
             SideMenuHeader(
                 text = "Stashes",
-                icon = painterResource("stash.svg"),
+                icon = painterResource(AppIcons.STASH),
                 itemsCount = stashes.count(),
                 hoverIcon = null,
                 isExpanded = isExpanded,
@@ -276,6 +336,7 @@ fun LazyListScope.stashes(
         items(stashes, key = { it.name }) { stash ->
             Stash(
                 stash,
+                isSelected = selectedItem is SelectedItem.Stash && selectedItem.revCommit == stash,
                 onClick = { stashesViewModel.selectStash(stash) },
                 onApply = { stashesViewModel.applyStash(stash) },
                 onPop = { stashesViewModel.popStash(stash) },
@@ -285,20 +346,75 @@ fun LazyListScope.stashes(
     }
 }
 
+fun LazyListScope.submodules(
+    submodulesState: SubmodulesState,
+    submodulesViewModel: SubmodulesViewModel,
+    onShowEditSubmodulesDialog: () -> Unit,
+) {
+    val isExpanded = submodulesState.isExpanded
+    val submodules = submodulesState.submodules
+
+    item {
+        ContextMenu(
+            items = { emptyList() }
+        ) {
+            SideMenuHeader(
+                text = "Submodules",
+                icon = painterResource(AppIcons.TOPIC),
+                itemsCount = submodules.count(),
+                hoverIcon = {
+                    IconButton(
+                        onClick = onShowEditSubmodulesDialog,
+                        modifier = Modifier
+                            .padding(end = 16.dp)
+                            .size(16.dp)
+                            .handOnHover(),
+                    ) {
+                        Icon(
+                            painter = painterResource(AppIcons.ADD),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxSize(),
+                            tint = MaterialTheme.colors.onBackground,
+                        )
+                    }
+                },
+                isExpanded = isExpanded,
+                onExpand = { submodulesViewModel.onExpand() }
+            )
+        }
+    }
+
+    if (isExpanded) {
+        items(submodules, key = { it.first }) { submodule ->
+            Submodule(
+                submodule = submodule,
+                onInitializeSubmodule = { submodulesViewModel.initializeSubmodule(submodule.first) },
+//                onDeinitializeSubmodule = { submodulesViewModel.onDeinitializeSubmodule(submodule.first) },
+                onSyncSubmodule = { submodulesViewModel.onSyncSubmodule(submodule.first) },
+                onUpdateSubmodule = { submodulesViewModel.onUpdateSubmodule(submodule.first) },
+                onOpenSubmoduleInTab = { submodulesViewModel.onOpenSubmoduleInTab(submodule.first) },
+                onDeleteSubmodule = { submodulesViewModel.onDeleteSubmodule(submodule.first) },
+            )
+        }
+    }
+}
+
 @Composable
 private fun Branch(
     branch: Ref,
     currentBranch: Ref?,
-    isCurrentBranch: Boolean,
+    isSelectedItem: Boolean,
     onBranchClicked: () -> Unit,
     onBranchDoubleClicked: () -> Unit,
     onCheckoutBranch: () -> Unit,
     onMergeBranch: () -> Unit,
     onRebaseBranch: () -> Unit,
     onDeleteBranch: () -> Unit,
-    onPushToRemoteBranch: () -> Unit,
-    onPullFromRemoteBranch: () -> Unit,
+    onChangeDefaultUpstreamBranch: () -> Unit,
 ) {
+    val isCurrentBranch = currentBranch?.name == branch.name
+
     ContextMenu(
         items = {
             branchContextMenuItems(
@@ -310,14 +426,17 @@ private fun Branch(
                 onMergeBranch = onMergeBranch,
                 onDeleteBranch = onDeleteBranch,
                 onRebaseBranch = onRebaseBranch,
-                onPushToRemoteBranch = onPushToRemoteBranch,
-                onPullFromRemoteBranch = onPullFromRemoteBranch,
+                onPushToRemoteBranch = {},
+                onPullFromRemoteBranch = {},
+                onChangeDefaultUpstreamBranch = onChangeDefaultUpstreamBranch
             )
         }
     ) {
         SideMenuSubentry(
             text = branch.simpleName,
-            iconResourcePath = "branch.svg",
+            fontWeight = if (isCurrentBranch) FontWeight.Bold else FontWeight.Normal,
+            iconResourcePath = AppIcons.BRANCH,
+            isSelected = isSelectedItem,
             onClick = onBranchClicked,
             onDoubleClick = onBranchDoubleClicked,
         ) {
@@ -326,6 +445,7 @@ private fun Branch(
                     text = "HEAD",
                     color = MaterialTheme.colors.onBackgroundSecondary,
                     style = MaterialTheme.typography.caption,
+                    fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
             }
@@ -341,8 +461,9 @@ private fun Remote(
 ) {
     SideMenuSubentry(
         text = remote.remoteInfo.remoteConfig.name,
-        iconResourcePath = "cloud.svg",
-        onClick = onRemoteClicked
+        iconResourcePath = AppIcons.CLOUD,
+        onClick = onRemoteClicked,
+        isSelected = false,
     )
 }
 
@@ -350,21 +471,38 @@ private fun Remote(
 @Composable
 private fun RemoteBranches(
     remoteBranch: Ref,
+    currentBranch: Ref?,
     onBranchClicked: () -> Unit,
+    onCheckoutBranch: () -> Unit,
     onDeleteBranch: () -> Unit,
+    onPushRemoteBranch: () -> Unit,
+    onPullRemoteBranch: () -> Unit,
 ) {
     ContextMenu(
         items = {
-            remoteBranchesContextMenu(
-                onDeleteBranch = onDeleteBranch
+            branchContextMenuItems(
+                branch = remoteBranch,
+                currentBranch = currentBranch,
+                isCurrentBranch = false,
+                isLocal = false,
+                onCheckoutBranch = onCheckoutBranch,
+                onMergeBranch = {},
+                onDeleteBranch = {},
+                onDeleteRemoteBranch = onDeleteBranch,
+                onRebaseBranch = {},
+                onPushToRemoteBranch = onPushRemoteBranch,
+                onPullFromRemoteBranch = onPullRemoteBranch,
+                onChangeDefaultUpstreamBranch = {},
             )
         }
     ) {
         SideMenuSubentry(
             text = remoteBranch.simpleName,
             extraPadding = 24.dp,
-            iconResourcePath = "branch.svg",
-            onClick = onBranchClicked
+            isSelected = false,
+            iconResourcePath = AppIcons.BRANCH,
+            onClick = onBranchClicked,
+            onDoubleClick = onCheckoutBranch,
         )
     }
 }
@@ -372,6 +510,7 @@ private fun RemoteBranches(
 @Composable
 private fun Tag(
     tag: Ref,
+    isSelected: Boolean,
     onTagClicked: () -> Unit,
     onCheckoutTag: () -> Unit,
     onDeleteTag: () -> Unit,
@@ -386,7 +525,8 @@ private fun Tag(
     ) {
         SideMenuSubentry(
             text = tag.simpleName,
-            iconResourcePath = "tag.svg",
+            isSelected = isSelected,
+            iconResourcePath = AppIcons.TAG,
             onClick = onTagClicked,
         )
     }
@@ -396,6 +536,7 @@ private fun Tag(
 @Composable
 private fun Stash(
     stash: RevCommit,
+    isSelected: Boolean,
     onClick: () -> Unit,
     onApply: () -> Unit,
     onPop: () -> Unit,
@@ -412,8 +553,55 @@ private fun Stash(
     ) {
         SideMenuSubentry(
             text = stash.shortMessage,
-            iconResourcePath = "stash.svg",
+            isSelected = isSelected,
+            iconResourcePath = AppIcons.STASH,
             onClick = onClick,
         )
+    }
+}
+
+@Composable
+private fun Submodule(
+    submodule: Pair<String, SubmoduleStatus>,
+    onInitializeSubmodule: () -> Unit,
+//    onDeinitializeSubmodule: () -> Unit,
+    onSyncSubmodule: () -> Unit,
+    onUpdateSubmodule: () -> Unit,
+    onOpenSubmoduleInTab: () -> Unit,
+    onDeleteSubmodule: () -> Unit,
+) {
+    ContextMenu(
+        items = {
+            submoduleContextMenuItems(
+                submodule.second,
+                onInitializeSubmodule = onInitializeSubmodule,
+//                onDeinitializeSubmodule = onDeinitializeSubmodule,
+                onSyncSubmodule = onSyncSubmodule,
+                onUpdateSubmodule = onUpdateSubmodule,
+                onOpenSubmoduleInTab = onOpenSubmoduleInTab,
+                onDeleteSubmodule = onDeleteSubmodule,
+            )
+        }
+    ) {
+        SideMenuSubentry(
+            text = submodule.first,
+            iconResourcePath = AppIcons.TOPIC,
+            isSelected = false,
+            onClick = {
+                if (submodule.second.type.isValid()) {
+                    onOpenSubmoduleInTab()
+                }
+            },
+        ) {
+            val stateName = submodule.second.type.toString()
+            DelayedTooltip(stateName) {
+                Text(
+                    text = stateName.first().toString(),
+                    color = MaterialTheme.colors.onBackgroundSecondary,
+                    style = MaterialTheme.typography.body2,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+        }
     }
 }

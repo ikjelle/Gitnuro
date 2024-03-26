@@ -4,6 +4,7 @@ package com.jetpackduba.gitnuro.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.selection.DisableSelection
@@ -20,16 +21,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import com.jetpackduba.gitnuro.extensions.*
+import com.jetpackduba.gitnuro.AppIcons
+import com.jetpackduba.gitnuro.extensions.handOnHover
+import com.jetpackduba.gitnuro.extensions.lineAt
+import com.jetpackduba.gitnuro.extensions.toStringWithSpaces
 import com.jetpackduba.gitnuro.keybindings.KeybindingOption
 import com.jetpackduba.gitnuro.keybindings.matchesBinding
 import com.jetpackduba.gitnuro.theme.notoSansMonoFontFamily
-import com.jetpackduba.gitnuro.theme.tertiarySurface
 import com.jetpackduba.gitnuro.theme.secondarySurface
+import com.jetpackduba.gitnuro.theme.tertiarySurface
 import com.jetpackduba.gitnuro.ui.components.PrimaryButton
 import com.jetpackduba.gitnuro.ui.components.ScrollableLazyColumn
 import org.eclipse.jgit.blame.BlameResult
@@ -54,7 +59,7 @@ fun Blame(
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { keyEvent ->
-                if (keyEvent.matchesBinding(KeybindingOption.EXIT)) {
+                if (keyEvent.matchesBinding(KeybindingOption.EXIT) && keyEvent.type == KeyEventType.KeyDown) {
                     onClose()
                     true
                 } else
@@ -94,7 +99,7 @@ fun Blame(
                                     .width(200.dp)
                                     .fillMaxHeight()
                                     .background(MaterialTheme.colors.secondarySurface)
-                                    .fastClickable { if (commit != null) onSelectCommit(commit) },
+                                    .clickable { if (commit != null) onSelectCommit(commit) },
                                 verticalArrangement = Arrangement.Center,
                             ) {
                                 Text(
@@ -104,7 +109,7 @@ fun Blame(
                                     style = MaterialTheme.typography.body2,
                                 )
                                 Text(
-                                    text = commit?.shortMessage ?: "Uncommited change",
+                                    text = commit?.shortMessage ?: "Uncommitted change",
                                     style = MaterialTheme.typography.caption,
                                     maxLines = 1,
                                     modifier = Modifier.padding(start = 16.dp),
@@ -186,7 +191,7 @@ fun MinimizedBlame(
                 .handOnHover()
         ) {
             Image(
-                painter = painterResource("close.svg"),
+                painter = painterResource(AppIcons.CLOSE),
                 contentDescription = "Close blame",
                 colorFilter = ColorFilter.tint(MaterialTheme.colors.onBackground),
             )
@@ -221,7 +226,7 @@ private fun Header(
                 .handOnHover()
         ) {
             Image(
-                painter = painterResource("close.svg"),
+                painter = painterResource(AppIcons.CLOSE),
                 contentDescription = "Close blame",
                 colorFilter = ColorFilter.tint(MaterialTheme.colors.onBackground),
             )
