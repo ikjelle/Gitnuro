@@ -12,7 +12,11 @@ can use it nor relying on web technologies.
 ## Download/Install
 
 Linux:
+To get a jar of this code use: `./gradlew fatJarLinux`. Then move the file from /build/libs/Gitnuro-linux-{VERSION}.jar towards the location you want and then create an .desktop file to launch it. You may want to add the icon to that location as well. You can run the jar with `java -jar Gitnuro-linux.jar`
 
+To get the original:
+
+Linux:
 - Available as Flatpak [here](https://flathub.org/apps/details/com.jetpackduba.Gitnuro) or by
   running `flatpak install com.jetpackduba.Gitnuro` if you have Flatpak & Flathub already setup.
     - If Flathub is not set up, you can add the source with the following
